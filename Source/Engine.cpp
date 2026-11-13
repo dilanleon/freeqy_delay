@@ -7,7 +7,7 @@ void Engine::prepare(double sampleRate, int count)
 {
     sr = sampleRate;
     numChannels = count;
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < 8; ++i)
         transforms[i] = std::make_unique<juce::dsp::FFT>(i + 4);
     // The smallest hop has the largest frame count and largest storage ratio (9/2).
     const size_t maxFrames = size_t(std::ceil(sr * 10 / 2)) + 4;
@@ -16,15 +16,6 @@ void Engine::prepare(double sampleRate, int count)
         channel.history.resize(maxFrames * 9);
     for (int i = 0; i <= 4096; ++i)
         sineTable[i] = float(std::sin(tau * i / 4096));
-    // Windowed ideal Hilbert FIR; reverse coefficients for contiguous SIMD dot products.
-    for (int j = 0; j < ShifterLength; ++j)
-    {
-        const int m = j - ShifterDelay;
-        const double w =
-            j < 511 ? .42 - .5 * std::cos(tau * j / 510) + .08 * std::cos(2 * tau * j / 510) : 0;
-        hilbert[ShifterLength - 1 - j] =
-            (m != 0 && (std::abs(m) & 1)) ? float(2 * w / (std::numbers::pi * m)) : 0.f;
-    }
     reset();
 }
 void Engine::configureSize(int requested)
@@ -37,15 +28,17 @@ void Engine::configureSize(int requested)
     for (int i = 0; i < size; ++i)
         window[i] = float(.5 - .5 * std::cos(tau * i / size));
     pos = hop = frame = 0;
-    banks.blend(morphPosition, curves);
+    const auto positions = morphPositions();
+    const auto offsets = shiftOffsets();
     for (int ch = 0; ch < 2; ++ch)
         for (int k = 0; k < bins; ++k)
         {
-            int index = k * (B - 1) / (bins - 1);
+            const float index =
+                CurveBanks::shiftedIndex(float(k * (B - 1)) / (bins - 1), offsets[ch], sr);
             channels[ch].delay[k] =
-                curves.values[ch][0][index] * settings.maxDelayMs * float(sr) / 1000;
-            channels[ch].feedback[k] = curves.values[ch][1][index];
-            channels[ch].level[k] = curves.values[ch][2][index];
+                banks.sample(ch, 0, index, positions[ch]) * settings.maxDelayMs * float(sr) / 1000;
+            channels[ch].feedback[k] = banks.sample(ch, 1, index, positions[ch]);
+            channels[ch].level[k] = banks.sample(ch, 2, index, positions[ch]);
         }
 }
 void Engine::reset()
@@ -53,18 +46,22 @@ void Engine::reset()
     epoch = 1;
     std::fill(historyEpoch.begin(), historyEpoch.end(), 0);
     morphPosition = settings.morphPercent;
-    configureSize(settings.fftSize);
+    morphDepth = settings.morphDepth;
+    morphRate = settings.morphRateHz;
+    morphStereoBlend = settings.stereoMorph ? 1.f : 0.f;
+    morphHold = settings.morphRateHz == 0 ? 1.f : 0.f;
+    morphPhase = std::numbers::pi / 2;
     clearPending = false;
     wetClearGain = 1;
-    dryPos = alignPos = shiftPos = 0;
+    dryPos = alignPos = 0;
     lfoPhase = std::numbers::pi / 2;
-    carrierPhase = 0;
     mix = settings.mix;
     inGain = std::pow(10.f, settings.inputTrimDb / 20);
     outGain = std::pow(10.f, settings.outputTrimDb / 20);
     amount = settings.shiftHz;
     rate = settings.shiftRateHz;
-    shiftBlend = amount > 0 ? 1.f : 0.f;
+    shiftHold = settings.shiftRateHz == 0 ? 1.f : 0.f;
+    configureSize(settings.fftSize);
     for (auto &channel : channels)
     {
         channel.dry.fill(0);
@@ -74,6 +71,7 @@ void Engine::reset()
 }
 void Engine::clearWetHistory()
 {
+    delayAnalyzer.reset();
     if (++epoch == 0)
     {
         std::fill(historyEpoch.begin(), historyEpoch.end(), 0);
@@ -84,7 +82,6 @@ void Engine::clearWetHistory()
         channel.input.fill(0);
         channel.ola.fill(0);
         channel.align.fill(0);
-        channel.shifter.fill(0);
     }
     // Dry PDC, curve banks, smoothing, and modulation phases are preserved.
 }
@@ -118,7 +115,11 @@ Engine::C Engine::read(const Channel &channel, int k, float samples, bool curren
 }
 void Engine::transform()
 {
-    banks.blend(morphPosition, curves);
+    // Only evaluate active FFT bins; a 16-sample window must not blend 1025 points per hop.
+    const auto positions = morphPositions();
+    const auto offsets = shiftOffsets();
+    auto curveValue = [&](int ch, int type, float index)
+    { return banks.sample(ch, type, index, positions[ch]); };
     float ds = 1 - std::exp(-float(step) / (float(sr) * .05f)),
           gs = 1 - std::exp(-float(step) / (float(sr) * .02f));
     for (int ch = 0; ch < numChannels; ++ch)
@@ -129,16 +130,17 @@ void Engine::transform()
         transforms[order]->performRealOnlyForwardTransform(channel.fft.data(), true);
         for (int k = 0; k < bins; ++k)
         {
-            int index = k * (B - 1) / (bins - 1);
+            const float index =
+                CurveBanks::shiftedIndex(float(k * (B - 1)) / (bins - 1), offsets[ch], sr);
             channel.delay[k] +=
-                ds * (curves.values[ch][0][index] * settings.maxDelayMs * float(sr) / 1000 -
+                ds * (curveValue(ch, 0, index) * settings.maxDelayMs * float(sr) / 1000 -
                       channel.delay[k]);
-            channel.feedback[k] += gs * (curves.values[ch][1][index] - channel.feedback[k]);
-            channel.level[k] += gs * (curves.values[ch][2][index] - channel.level[k]);
+            channel.feedback[k] += gs * (curveValue(ch, 1, index) - channel.feedback[k]);
+            channel.level[k] += gs * (curveValue(ch, 2, index) - channel.level[k]);
             float delay = channel.delay[k];
             C feedback = read(channel, k, delay, false);
             C value = C(channel.fft[2 * k], channel.fft[2 * k + 1]) +
-                      std::clamp(channel.feedback[k], 0.f, .99f) * feedback;
+                      std::clamp(channel.feedback[k], 0.f, 1.f) * feedback;
             if (!std::isfinite(value.real()) || !std::isfinite(value.imag()))
                 value = {};
             C output = (delay >= step ? feedback : read(channel, k, delay, true, value)) *
@@ -179,16 +181,18 @@ void Engine::process(float *const *data, int count, bool bypass)
         else
             wetClearGain = std::min(1.f, wetClearGain + clearStep);
         morphPosition += a * (settings.morphPercent - morphPosition);
+        morphDepth += a * (settings.morphDepth - morphDepth);
+        morphRate += a * (settings.morphRateHz - morphRate);
+        morphHold += a * ((settings.morphRateHz == 0 ? 1.f : 0.f) - morphHold);
+        morphStereoBlend += a * ((settings.stereoMorph ? 1.f : 0.f) - morphStereoBlend);
+        if (morphStereoBlend < 1e-7f)
+            morphStereoBlend = 0;
         mix += a * (settings.mix - mix);
         inGain += a * (targetIn - inGain);
         outGain += a * (targetOut - outGain);
         amount += a * (settings.shiftHz - amount);
         rate += a * (settings.shiftRateHz - rate);
-        shiftBlend += a * ((settings.shiftHz > 0 ? 1.f : 0.f) - shiftBlend);
-        if (shiftBlend < 1e-7f)
-            shiftBlend = 0;
-        const double angle = carrierPhase;
-        float cosine = float(std::cos(angle)), sine = float(std::sin(angle));
+        shiftHold += a * ((settings.shiftRateHz == 0 ? 1.f : 0.f) - shiftHold);
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto &channel = channels[ch];
@@ -201,33 +205,14 @@ void Engine::process(float *const *data, int count, bool bypass)
             channel.ola[pos] = 0;
             channel.align[alignPos] = wet;
             wet = channel.align[(alignPos + MaxFft - (MaxFft - size)) % MaxFft];
-            channel.shifter[shiftPos] = channel.shifter[shiftPos + ShifterLength] = wet;
-            float inPhase =
-                channel.shifter[(shiftPos + ShifterLength - ShifterDelay) % ShifterLength];
-            float shifted = inPhase;
-            if (shiftBlend > 0)
-            {
-                const float *signal = channel.shifter.data() + shiftPos + 1;
-                float q0 = 0, q1 = 0, q2 = 0, q3 = 0;
-                // Every second Hilbert coefficient is exactly zero.
-                for (int j = 1; j < ShifterLength; j += 8)
-                {
-                    q0 += signal[j] * hilbert[j];
-                    q1 += signal[j + 2] * hilbert[j + 2];
-                    q2 += signal[j + 4] * hilbert[j + 4];
-                    q3 += signal[j + 6] * hilbert[j + 6];
-                }
-                float quadrature = q0 + q1 + q2 + q3;
-                shifted = inPhase * cosine - quadrature * (ch == 0 ? sine : -sine);
-            }
-            wet = inPhase + shiftBlend * (shifted - inPhase);
+            delayAnalyzer.push(ch, wetClearGain * wet);
             data[ch][n] = bypass ? rawDry : ((1 - mix) * dry + mix * wetClearGain * wet) * outGain;
         }
+        delayAnalyzer.advance(numChannels);
         dryPos = (dryPos + 1) % Latency;
         alignPos = (alignPos + 1) % MaxFft;
-        shiftPos = (shiftPos + 1) % ShifterLength;
-        carrierPhase = std::remainder(carrierPhase + tau * amount * std::sin(lfoPhase) / sr, tau);
         lfoPhase = std::remainder(lfoPhase + tau * rate / sr, tau);
+        morphPhase = std::remainder(morphPhase + tau * morphRate / sr, tau);
         pos = (pos + 1) % size;
         if (++hop == step)
         {

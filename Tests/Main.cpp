@@ -99,7 +99,7 @@ int main()
             }
         }
         for (double sr : {44100., 48000., 96000., 192000.})
-            for (int size : {16, 32, 64, 128, 256, 512, 1024})
+            for (int size : {16, 32, 64, 128, 256, 512, 1024, 2048})
                 for (int channels : {1, 2})
                 {
                     Engine engine;
@@ -129,11 +129,22 @@ int main()
                     run(engine, left, right, channels);
                     require(relativeError(left, source, Latency + delay) < -85,
                             "integer hop delay");
+                    const int fractionalDelay = 3 * size / 16;
+                    for (auto &ch : curves.values)
+                        ch[0].fill(float(fractionalDelay) / float(sr));
+                    engine.setCurves(curves);
+                    engine.reset();
+                    for (int n = 0; n < int(source.size()); ++n)
+                        source[n] = float(.1 * std::sin(tau * 3 * n / size));
+                    left = right = source;
+                    run(engine, left, right, channels);
+                    require(relativeError(left, source, Latency + fractionalDelay) < -25,
+                            "fractional delay phase/amplitude");
                 }
         std::cout
-            << "All seven STFT sizes reconstruct and delay correctly, mono/stereo, 44.1–192 kHz\n";
+            << "All eight STFT sizes reconstruct and delay correctly, mono/stereo, 44.1–192 kHz\n";
         // Independent frequency regions retain their curve locations when the FFT size changes.
-        for (int size : {16, 128, 1024})
+        for (int size : {16, 128, 1024, 2048})
         {
             Engine engine;
             Settings settings;
@@ -154,13 +165,16 @@ int main()
             left = right = input;
             run(engine, left, right);
             double error = 0, power = 0;
-            for (int n = 4000; n < int(left.size()); ++n)
+            // Wait until both the analysis and synthesis windows have cleared startup.
+            for (int n = Latency + size + delay; n < int(left.size()); ++n)
             {
                 double expected = .05 * std::sin(tau * 2 * (n - Latency - delay) / size) +
                                   .05 * std::sin(tau * 6 * (n - Latency) / size);
                 error += std::pow(left[n] - expected, 2);
                 power += expected * expected;
             }
+            std::cout << "remapping size " << size << ": " << 10 * std::log10(error / power)
+                      << " dB\n";
             require(10 * std::log10(error / power) < -80, "frequency curve remapping");
         }
         // Feedback and level controls; dry/bypass latency remains fixed across size switches.
@@ -184,6 +198,17 @@ int main()
             require(std::abs(left[Latency + 2048] - .5f) < 1e-5, "feedback decay");
             require(std::abs(left[Latency + 3072] - .25f) < 1e-5, "second decay");
             for (auto &ch : c.values)
+                ch[1].fill(1);
+            e.setCurves(c);
+            e.reset();
+            left.assign(left.size(), 0);
+            right = left;
+            left[0] = 1;
+            run(e, left, right);
+            require(std::abs(left[Latency + 1024] - 1) < 1e-5 &&
+                        std::abs(left[Latency + 8192] - 1) < 1e-5,
+                    "100 percent feedback decays");
+            for (auto &ch : c.values)
                 ch[2].fill(0);
             e.setCurves(c);
             e.reset();
@@ -199,62 +224,154 @@ int main()
             run(e, left, right, 2, true);
             require(left[Latency] == .5f, "bypass latency");
         }
-        // True single-sideband frequency shift: additive Hz, opposite directions, no dual image.
+        // Curve-axis shifts never transpose audio when maps are flat, including modulation.
         for (double sr : {48000., 192000.})
+            for (float rate : {0.f, 1.f})
+            {
+                Engine e;
+                Settings s;
+                s.mix = 1;
+                s.shiftHz = 1000;
+                s.shiftRateHz = rate;
+                e.setSettings(s);
+                e.setCurves(transparent());
+                e.prepare(sr, 2);
+                std::vector<float> source(48000), left, right;
+                for (int n = 0; n < int(source.size()); ++n)
+                    source[n] = float(.1 * std::sin(tau * 1000 * n / sr));
+                left = right = source;
+                run(e, left, right);
+                require(relativeError(left, source, Latency) < -90 &&
+                            relativeError(right, source, Latency) < -90,
+                        "curve shift must preserve audio frequency with flat maps");
+            }
+        // Entering the zero-rate hold is smoothed instead of snapping to full offset.
         {
             Engine e;
             Settings s;
-            s.mix = 1;
-            s.shiftHz = 100;
-            s.shiftRateHz = 0;
-            s.fftSize = 16;
-            e.setSettings(s);
-            e.setCurves(transparent());
-            e.prepare(sr, 2);
-            double fundamental = sr == 48000 ? 1000 : 4000;
-            int length = int(sr / 2), start = int(sr / 4);
-            std::vector<float> left(static_cast<size_t>(sr), 0.f), right;
-            for (int n = 0; n < int(left.size()); ++n)
-                left[n] = float(.1 * std::sin(tau * fundamental * n / sr));
-            right = left;
-            run(e, left, right);
-            double lu = amplitude(left, fundamental + 100, sr, start, length),
-                   ld = amplitude(left, fundamental - 100, sr, start, length),
-                   rd = amplitude(right, fundamental - 100, sr, start, length),
-                   ru = amplitude(right, fundamental + 100, sr, start, length);
-            std::cout << sr << " Hz shifter: main " << lu << ", " << rd << " image ratio "
-                      << ld / lu << ", " << ru / rd << "\n";
-            require(std::abs(lu - .1) < .001 && std::abs(rd - .1) < .001, "shifted tone gain");
-            require(ld / lu < .002 && ru / rd < .002, "shift direction or sideband suppression");
-        }
-        // Moving shifter follows the sinusoidal Hz offset continuously and in opposite directions.
-        {
-            Engine e;
-            Settings s;
-            s.mix = 1;
-            s.shiftHz = 50;
+            s.mix = 0;
+            s.shiftHz = 1000;
             s.shiftRateHz = 1;
+            s.stereoMorph = true;
+            s.morphPercent = 50;
+            s.morphDepth = 40;
+            s.morphRateHz = 1;
             e.setSettings(s);
             e.setCurves(transparent());
             e.prepare(48000, 2);
+            std::vector<float> left(6576), right(left.size());
+            run(e, left, right);
+            const auto shiftBefore = e.shiftOffsets();
+            const auto morphBefore = e.morphPositions();
+            s.shiftRateHz = s.morphRateHz = 0;
+            e.setSettings(s);
+            left.assign(1, 0);
+            right.assign(1, 0);
+            run(e, left, right);
+            require(std::abs(e.shiftOffsets()[0] - shiftBefore[0]) < 5 &&
+                        std::abs(e.morphPositions()[0] - morphBefore[0]) < .2f,
+                    "zero-rate hold transition jumped");
+            left.assign(48000, 0);
+            right.assign(48000, 0);
+            run(e, left, right);
+            require(std::abs(e.shiftOffsets()[0] - 1000) < .1f &&
+                        std::abs(e.morphPositions()[0] - 90) < .1f &&
+                        std::abs(e.morphPositions()[1] - 10) < .1f,
+                    "zero-rate hold did not settle at full opposite offsets");
+        }
+        // All three maps use fractional frequency lookups with held edge values.
+        {
+            CurveBanks b;
+            b.count = 2;
+            for (int bank = 0; bank < 2; ++bank)
+                for (auto &ch : b.banks[bank].values)
+                    for (int t = 0; t < 3; ++t)
+                        for (int k = 0; k < B; ++k)
+                            ch[t][k] = float(k) / (B - 1) * (.2f + .2f * t) + .1f * bank;
+            for (int ch = 0; ch < 2; ++ch)
+                for (int t = 0; t < 3; ++t)
+                {
+                    const float index =
+                        CurveBanks::shiftedIndex(100, ch == 0 ? 100.f : -100.f, 48000);
+                    require(std::abs(b.sample(ch, t, index, 25) -
+                                     (index / (B - 1) * (.2f + .2f * t) + .025f)) < 1e-6,
+                            "fractional curve shift and morph");
+                }
+            require(CurveBanks::shiftedIndex(0, 1000, 48000) == 0 &&
+                        CurveBanks::shiftedIndex(B - 1, -1000, 48000) == B - 1,
+                    "curve shift holds spectrum edges");
+        }
+        // A shifted level band passes the original tone on one side, without new pitches.
+        for (float offset : {500.f, -500.f})
+        {
+            Engine e;
+            Settings s;
+            s.mix = 1;
+            s.fftSize = 2048;
+            s.shiftHz = std::abs(offset);
+            s.shiftRateHz = 0;
+            auto c = transparent();
+            for (auto &ch : c.values)
+                for (int k = 0; k < B; ++k)
+                {
+                    float hz = float(k) * 48000 / N;
+                    ch[2][k] = std::abs(hz - (1500 - offset)) < 200 ? 1.f : 0.f;
+                }
+            e.setSettings(s);
+            e.setCurves(c);
+            e.prepare(48000, 2);
             std::vector<float> left(48000), right;
-            for (int n = 0; n < 48000; ++n)
-                left[n] = float(.1 * std::sin(tau * 1000 * n / 48000));
+            for (int n = 0; n < int(left.size()); ++n)
+                left[n] = float(.1 * std::sin(tau * 1500 * n / 48000));
             right = left;
             run(e, left, right);
-            double phase = 0, error = 0, power = 0;
-            for (int n = 0; n < 48000; ++n)
+            const auto &pass = offset > 0 ? left : right;
+            const auto &stop = offset > 0 ? right : left;
+            require(std::abs(amplitude(pass, 1500, 48000, 12000, 24000) - .1) < .001,
+                    "shifted level map direction / original tone");
+            require(amplitude(stop, 1500, 48000, 12000, 24000) < .00001,
+                    "opposite level map shift");
+            require(amplitude(pass, 2000, 48000, 12000, 24000) < .00001,
+                    "curve shift must not translate audio bins");
+        }
+        // Shifted delay and feedback maps act on the same unchanged spectral bins.
+        for (float feedback : {0.f, .4f})
+        {
+            Engine e;
+            Settings s;
+            s.mix = 1;
+            s.fftSize = 2048;
+            s.shiftHz = 500;
+            s.shiftRateHz = 0;
+            constexpr double frequency = 1476.5625;
+            constexpr int delay = 768;
+            auto c = transparent();
+            for (auto &ch : c.values)
+                for (int k = 0; k < B; ++k)
+                    if (std::abs(float(k) * 48000 / N - (frequency - 500)) < 300)
+                    {
+                        ch[0][k] = float(delay) / 48000;
+                        ch[1][k] = feedback;
+                    }
+            e.setSettings(s);
+            e.setCurves(c);
+            e.prepare(48000, 2);
+            std::vector<float> left(48000), right;
+            for (int n = 0; n < int(left.size()); ++n)
+                left[n] = float(.1 * std::sin(tau * frequency * n / 48000));
+            right = left;
+            run(e, left, right);
+            const auto phase = std::polar(1., -tau * frequency * delay / 48000);
+            const auto gain = phase / (1. - double(feedback) * phase);
+            double error = 0, power = 0;
+            for (int n = 16000; n < int(left.size()); ++n)
             {
-                if (n > 12000)
-                {
-                    double a = .1 * std::sin(tau * 1000 * (n - Latency) / 48000 + phase),
-                           b = .1 * std::sin(tau * 1000 * (n - Latency) / 48000 - phase);
-                    error += std::pow(left[n] - a, 2) + std::pow(right[n] - b, 2);
-                    power += a * a + b * b;
-                }
-                phase = std::remainder(phase + tau * 50 * std::cos(tau * n / 48000) / 48000, tau);
+                const auto tone = .1 * std::polar(1., tau * frequency * (n - Latency) / 48000);
+                error += std::pow(left[n] - (tone * gain).imag(), 2) +
+                         std::pow(right[n] - tone.imag(), 2);
+                power += std::norm(tone);
             }
-            require(10 * std::log10(error / power) < -65, "moving frequency shift");
+            require(10 * std::log10(error / power) < -70, "shifted delay / feedback map routing");
         }
         // Morphing stays editor-independent with all FFT sizes.
         {
@@ -283,6 +400,93 @@ int main()
             run(e, left, right);
             require(std::abs(left.back() - .2f) < 1e-4, "morph after FFT switch");
         }
+        // Stereo morph uses opposite bounded bank positions, independently of curve shifting.
+        {
+            for (float center : {0.f, 50.f, 100.f})
+                for (float movement : {-1.f, 0.f, 1.f})
+                {
+                    auto positions = Engine::stereoPositions(center, 100, movement);
+                    require(positions[0] >= 0 && positions[0] <= 100 && positions[1] >= 0 &&
+                                positions[1] <= 100,
+                            "stereo morph bounds");
+                }
+            auto upper = Engine::stereoPositions(95, 10, 1),
+                 lower = Engine::stereoPositions(5, 10, 1);
+            require(upper[0] == 5 && upper[1] == 85 && lower[0] == 15 && lower[1] == 95,
+                    "stereo morph does not wrap");
+            CurveBanks banks;
+            for (int b = 0; b < 4; ++b)
+            {
+                banks.banks[b] = transparent();
+                for (auto &ch : banks.banks[b].values)
+                    ch[2].fill(float(b) / 3);
+            }
+            Engine e;
+            Settings s;
+            s.mix = 1;
+            s.morphPercent = 50;
+            s.stereoMorph = true;
+            s.morphDepth = 25;
+            s.morphRateHz = 0;
+            e.setBanks(banks);
+            e.setSettings(s);
+            e.prepare(48000, 2);
+            std::vector<float> left(24000, .2f), right = left;
+            run(e, left, right);
+            require(std::abs(left.back() - .15f) < 1e-5 && std::abs(right.back() - .05f) < 1e-5,
+                    "fixed stereo morph");
+            s.morphRateHz = 1;
+            e.setSettings(s);
+            left.assign(48000, .2f);
+            right = left;
+            run(e, left, right);
+            float separation = 0;
+            for (int n = 5000; n < 48000; ++n)
+            {
+                require(std::abs(left[n] + right[n] - .2f) < 1e-4, "opposite stereo morph sum");
+                separation = std::max(separation, std::abs(left[n] - right[n]));
+            }
+            require(separation > .05f, "stereo morph not moving");
+            s.stereoMorph = false;
+            e.setSettings(s);
+            left.assign(24000, .2f);
+            right = left;
+            run(e, left, right);
+            require(std::abs(left.back() - .1f) < 1e-5 && std::abs(right.back() - .1f) < 1e-5,
+                    "stereo morph disable");
+            s.stereoMorph = true;
+            s.morphPercent = 95;
+            s.morphDepth = 10;
+            s.morphRateHz = 0;
+            e.setSettings(s);
+            e.reset();
+            left.assign(24000, .2f);
+            right = left;
+            run(e, left, right);
+            require(std::abs(left.back() - .01f) < 1e-5 && std::abs(right.back() - .17f) < 1e-5,
+                    "audible wrapped morph");
+            s.stereoMorph = false;
+            s.morphPercent = 100;
+            e.setSettings(s);
+            e.reset();
+            left.assign(24000, .2f);
+            right = left;
+            run(e, left, right);
+            require(std::abs(left.back() - .2f) < 1e-5 && left == right,
+                    "manual morph 100 endpoint changed");
+            banks.count = 1;
+            for (auto &ch : banks.banks[0].values)
+                ch[2].fill(.6f);
+            s.stereoMorph = true;
+            e.setSettings(s);
+            e.setBanks(banks);
+            e.reset();
+            left.assign(24000, .2f);
+            right = left;
+            run(e, left, right);
+            require(std::abs(left.back() - .12f) < 1e-5 && left == right,
+                    "single bank stereo morph");
+        }
         // Clear/repeated clear, shifted tails, and high-feedback transitions; no allocation.
         for (double sr : {48000., 192000.})
         {
@@ -296,7 +500,7 @@ int main()
             for (auto &ch : c.values)
             {
                 ch[0].fill(1024.f / float(sr));
-                ch[1].fill(.9f);
+                ch[1].fill(1.f);
             }
             e.setSettings(s);
             e.setCurves(c);
@@ -309,7 +513,7 @@ int main()
             run(e, left, right);
             for (size_t n = size_t(sr * .03); n < left.size(); ++n)
                 require(left[n] == 0 && right[n] == 0, "stale clear tail");
-            for (int size : {32, 64, 128, 256, 512, 1024, 16})
+            for (int size : {32, 64, 128, 256, 512, 1024, 2048, 16})
             {
                 s.fftSize = size;
                 e.setSettings(s);

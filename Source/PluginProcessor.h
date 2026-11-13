@@ -12,7 +12,7 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     }
     const juce::String getName() const override
     {
-        return "Spectral Delay";
+        return "FREEQY DELAY";
     }
     void prepareToPlay(double, int) override;
     void releaseResources() override {}
@@ -33,7 +33,9 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     }
     double getTailLengthSeconds() const override
     {
-        return 9400;
+        return infiniteFeedback.load(std::memory_order_relaxed)
+                   ? std::numeric_limits<double>::infinity()
+                   : 9400;
     }
     juce::AudioProcessorEditor *createEditor() override;
     bool hasEditor() const override
@@ -66,26 +68,45 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     {
         clearRequested.store(true, std::memory_order_release);
     }
-    bool spectrum(std::array<float, spectral::B> &);
+    struct Spectrum
+    {
+        spectral::StereoSpectrum input{}, delay{};
+        double seconds = 0;
+    };
+    bool spectrum(Spectrum &);
+    bool nextSpectrum(Spectrum &);
+    void discardSpectra();
+    float liveShiftOffset(int ch) const
+    {
+        return liveShift[std::clamp(ch, 0, 1)].load(std::memory_order_relaxed);
+    }
+    float liveMorphPosition(int ch) const
+    {
+        return liveMorph[std::clamp(ch, 0, 1)].load(std::memory_order_relaxed);
+    }
     std::atomic<int> selectedCurve{0}, selectedChannel{0}, selectedBank{0};
     std::atomic<bool> linked{false};
+    std::atomic<int> spectrogramSpeed{2}; // Display-only: 1.5, 3, 6, 12 seconds.
 
   private:
     spectral::Engine engine;
+    std::array<std::atomic<float>, 2> liveMorph{}, liveShift{};
     std::mutex modelMutex;
     spectral::CurveBanks model;
-    juce::AbstractFifo curveFifo{4}, spectrumFifo{4};
+    juce::AbstractFifo curveFifo{4}, spectrumFifo{128};
     std::array<spectral::CurveBanks, 4> curveQueue;
-    std::array<std::array<float, spectral::B>, 4> spectrumQueue{};
+    std::vector<Spectrum> spectrumQueue = std::vector<Spectrum>(128);
     bool pending = false;
+    std::atomic<bool> infiniteFeedback{false};
+    void updateTailFlag();
     std::atomic<bool> clearRequested{false};
-    juce::dsp::FFT analyzer{11};
-    std::array<float, spectral::N> input{};
-    std::array<float, 2 * spectral::N> fft{};
-    int inputPos = 0, analyzerHop = 0;
+    spectral::SpectrumAnalyzer inputAnalyzer;
+    bool spectrumReady = false;
+    int64_t meterSamples = 0;
+    double meterSampleRate = 48000;
     double sinePhase = 0;
     void process(juce::AudioBuffer<float> &, bool);
-    void analyze(const juce::AudioBuffer<float> &);
+    void analyze(const juce::AudioBuffer<float> &, int offset, int count);
     spectral::Settings readSettings() const;
     void timerCallback() override
     {

@@ -24,10 +24,13 @@ int main(int argc, char **argv)
         std::cerr << error << "\n";
         return 1;
     }
-    bool morphExposed = false, shiftExposed = false, rateExposed = false, sizeExposed = false;
+    bool morphExposed = false, shiftExposed = false, rateExposed = false, sizeExposed = false,
+         stereoMorphExposed = false;
     for (auto *parameter : plugin->getParameters())
     {
         const auto name = parameter->getName(100);
+        if (name == "Stereo Morph")
+            stereoMorphExposed = parameter->isAutomatable();
         if (name.contains("Shift Amount"))
             shiftExposed = parameter->isAutomatable();
         if (name.contains("Shift Rate"))
@@ -37,13 +40,13 @@ int main(int argc, char **argv)
         if (parameter->getName(100).contains("Curve Morph"))
             morphExposed = parameter->isAutomatable();
     }
-    if (!morphExposed || !shiftExposed || !rateExposed || !sizeExposed)
+    if (!morphExposed || !shiftExposed || !rateExposed || !sizeExposed || !stereoMorphExposed)
     {
         std::cerr << "Morph automation missing in VST3\n";
         return 1;
     }
     plugin->prepareToPlay(48000, 512);
-    if (plugin->getLatencySamples() != (diagnostic ? 0 : 1279))
+    if (plugin->getLatencySamples() != (diagnostic ? 0 : 2048))
     {
         std::cerr << "Wrong latency\n";
         return 1;
