@@ -158,6 +158,10 @@ class Engine
     {
         return size;
     }
+    bool wetClearActive() const
+    {
+        return clearPending || wetClearGain < 1.f;
+    }
 
   private:
     using C = std::complex<float>;

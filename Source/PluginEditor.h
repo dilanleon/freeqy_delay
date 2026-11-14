@@ -56,6 +56,7 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     spectral::SpectrogramHistory delayHistory;
     std::vector<Processor::Spectrum> displayFrames = std::vector<Processor::Spectrum>(128);
     double displayClockOffset = 0, lastDisplayAudio = -1, lastDisplayArrival = -1;
+    int activeScrollSpeed = -1;
     spectral::Curves drawing;
     Snapshot beforeBanks;
     std::vector<Snapshot> undoStack, redoStack;
@@ -71,6 +72,7 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     void drawAt(juce::Point<float>);
     void commit(const spectral::Curves &);
     void finishGesture();
+    void cancelGesture();
     void changeBankCount(int delta);
     void stepHistory(bool backwards);
     void resetDisplayHistory();

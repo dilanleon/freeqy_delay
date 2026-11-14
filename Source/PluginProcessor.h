@@ -2,6 +2,7 @@
 #pragma once
 #include "Engine.h"
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <cstdint>
 #include <mutex>
 class Processor final : public juce::AudioProcessor, private juce::Timer
 {
@@ -71,15 +72,19 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     void requestClearBuffer()
     {
         clearRequested.store(true, std::memory_order_release);
+        spectrumEpoch.fetch_add(1, std::memory_order_acq_rel);
     }
     struct Spectrum
     {
         spectral::StereoSpectrum input{}, delay{};
         double seconds = 0;
+        uint64_t epoch = 0;
     };
     bool spectrum(Spectrum &);
     bool nextSpectrum(Spectrum &);
+    int drainSpectra(Spectrum *, int capacity, double maxAgeSeconds);
     void discardSpectra();
+    void restartSpectra();
     float liveShiftOffset(int ch) const
     {
         return liveShift[std::clamp(ch, 0, 1)].load(std::memory_order_relaxed);
@@ -101,6 +106,8 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     juce::AbstractFifo curveFifo{4}, spectrumFifo{128};
     std::array<spectral::CurveBanks, 4> curveQueue;
     std::vector<Spectrum> spectrumQueue = std::vector<Spectrum>(128);
+    std::atomic<uint64_t> spectrumEpoch{1};
+    std::atomic<double> latestMeterSeconds{0};
     bool pending = false;
     std::atomic<bool> infiniteFeedback{false};
     void updateTailFlag();

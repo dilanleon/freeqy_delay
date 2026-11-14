@@ -74,6 +74,7 @@ void Processor::prepareToPlay(double sr, int)
     spectrumFifo.reset();
     meterSamples = 0;
     meterSampleRate = sr;
+    latestMeterSeconds.store(0, std::memory_order_release);
     sinePhase = 0;
     setLatencySamples(SPECTRAL_DIAGNOSTIC ? 0 : spectral::Latency);
 }
@@ -159,13 +160,17 @@ void Processor::analyze(const juce::AudioBuffer<float> &buffer, int offset, int 
 }
 bool Processor::nextSpectrum(Spectrum &out)
 {
-    int a, n, b, m;
-    spectrumFifo.prepareToRead(1, a, n, b, m);
-    if (!n)
-        return false;
-    out = spectrumQueue[a];
-    spectrumFifo.finishedRead(1);
-    return true;
+    for (;;)
+    {
+        int a, n, b, m;
+        spectrumFifo.prepareToRead(1, a, n, b, m);
+        if (!n)
+            return false;
+        out = spectrumQueue[a];
+        spectrumFifo.finishedRead(1);
+        if (out.epoch == spectrumEpoch.load(std::memory_order_acquire))
+            return true;
+    }
 }
 bool Processor::spectrum(Spectrum &out)
 {
@@ -177,9 +182,28 @@ bool Processor::spectrum(Spectrum &out)
 void Processor::discardSpectra()
 {
     Spectrum discarded;
-    while (nextSpectrum(discarded))
+    for (int remaining = spectrumFifo.getNumReady(); remaining > 0; --remaining)
+        if (!nextSpectrum(discarded))
+            break;
+}
+void Processor::restartSpectra()
+{
+    spectrumEpoch.fetch_add(1, std::memory_order_acq_rel);
+    discardSpectra();
+}
+int Processor::drainSpectra(Spectrum *out, int capacity, double maxAgeSeconds)
+{
+    const double newest = latestMeterSeconds.load(std::memory_order_acquire);
+    Spectrum frame;
+    int count = 0;
+    for (int remaining = spectrumFifo.getNumReady(); remaining > 0; --remaining)
     {
+        if (!nextSpectrum(frame))
+            break;
+        if (newest - frame.seconds <= maxAgeSeconds && count < capacity)
+            out[count++] = frame;
     }
+    return count;
 }
 spectral::Settings Processor::readSettings() const
 {
@@ -201,6 +225,7 @@ spectral::Settings Processor::readSettings() const
 void Processor::process(juce::AudioBuffer<float> &buffer, bool bypass)
 {
     juce::ScopedNoDenormals guard;
+    const uint64_t captureEpoch = spectrumEpoch.load(std::memory_order_acquire);
     for (int remaining = curveFifo.getNumReady(); remaining > 0; --remaining)
     {
         int a, n, b, m;
@@ -242,17 +267,19 @@ void Processor::process(juce::AudioBuffer<float> &buffer, bool bypass)
         {
             int a, n, b, m;
             spectrumFifo.prepareToWrite(1, a, n, b, m);
-            if (n)
+            if (n && (SPECTRAL_DIAGNOSTIC || !engine.wetClearActive()))
             {
                 spectrumQueue[a].input = inputAnalyzer.latest();
                 spectrumQueue[a].delay = engine.delaySpectrum();
                 spectrumQueue[a].seconds = double(meterSamples) / meterSampleRate;
+                spectrumQueue[a].epoch = captureEpoch;
                 spectrumFifo.finishedWrite(1);
             }
             spectrumReady = false;
         }
         offset += count;
     }
+    latestMeterSeconds.store(double(meterSamples) / meterSampleRate, std::memory_order_release);
     for (int ch = 0; ch < 2; ++ch)
     {
         liveMorph[ch].store(engine.morphPositions()[ch], std::memory_order_relaxed);

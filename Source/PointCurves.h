@@ -13,6 +13,66 @@ struct PointCurve
     static constexpr int capacity = 64;
     int count = 0;
     std::array<CurvePoint, capacity> points{};
+    static PointCurve fromCurve(const Curve &source, double sampleRate)
+    {
+        auto sampleAt = [&](double hz)
+        {
+            const float index = float(std::clamp(hz * N / sampleRate, 0., double(B - 1)));
+            const int lo = int(index), hi = std::min(lo + 1, B - 1);
+            return source[lo] + (index - lo) * (source[hi] - source[lo]);
+        };
+        std::array<CurvePoint, B + 2> candidates{};
+        int available = 0;
+        candidates[available++] = {0, sampleAt(20.), 0};
+        for (int i = 1; i < B; ++i)
+        {
+            const double hz = i * sampleRate / N;
+            if (hz > 20. && hz < 20000.)
+                candidates[available++] =
+                    {float(std::log(hz / 20.) / std::log(1000.)), source[i], 0};
+        }
+        candidates[available++] = {1, sampleAt(20000.), 0};
+
+        // Add the point with the largest interpolation error until the visible
+        // curve is represented or the editor-state capacity is reached.
+        std::array<int, capacity> chosen{};
+        chosen[0] = 0;
+        chosen[1] = available - 1;
+        PointCurve result;
+        result.count = 2;
+        while (result.count < capacity)
+        {
+            float largestError = .001f;
+            int bestSegment = -1, bestCandidate = -1;
+            for (int segment = 0; segment < result.count - 1; ++segment)
+            {
+                const auto &a = candidates[chosen[segment]];
+                const auto &b = candidates[chosen[segment + 1]];
+                for (int i = chosen[segment] + 1; i < chosen[segment + 1]; ++i)
+                {
+                    const auto &candidate = candidates[i];
+                    const float fraction = (candidate.x - a.x) / (b.x - a.x);
+                    const float error = std::abs(candidate.value -
+                                                 (a.value + fraction * (b.value - a.value)));
+                    if (error > largestError)
+                    {
+                        largestError = error;
+                        bestSegment = segment;
+                        bestCandidate = i;
+                    }
+                }
+            }
+            if (bestCandidate < 0)
+                break;
+            for (int i = result.count; i > bestSegment + 1; --i)
+                chosen[i] = chosen[i - 1];
+            chosen[bestSegment + 1] = bestCandidate;
+            ++result.count;
+        }
+        for (int i = 0; i < result.count; ++i)
+            result.points[i] = candidates[chosen[i]];
+        return result;
+    }
     float valueAt(float x) const
     {
         if (count < 1) return 0;

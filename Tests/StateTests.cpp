@@ -84,6 +84,13 @@ int main(int argc, char **argv)
         spectral::Curve rendered;
         pointCurve.render(rendered, 48000);
         check(rendered.front() == 0 && rendered.back() == 1, "point endpoint holds");
+        spectral::Curve narrow;
+        narrow.fill(.2f);
+        narrow[43] = 1.f;
+        const auto converted = spectral::PointCurve::fromCurve(narrow, 48000);
+        converted.render(rendered, 48000);
+        check(converted.count > 2 && rendered[43] > .95f && rendered[42] < .3f,
+              "point conversion lost a narrow drawn peak");
         // Values use the same display convention at automation boundaries as in the editor.
         juce::Slider maximumDelay;
         maximumDelay.setName("maxDelayMs");
@@ -332,6 +339,52 @@ int main(int argc, char **argv)
             while (probe.nextSpectrum(frame))
                 ++count;
             check(count == 31, "analyzer queue did not resume in timestamp order");
+            probe.prepareToPlay(48000, 8192);
+            for (int i = 0; i < 9; ++i)
+                probe.processBlock(block, midi);
+            std::vector<Processor::Spectrum> recent(128);
+            check(probe.drainSpectra(recent.data(), int(recent.size()), .15) == 0,
+                  "stalled display re-anchored old queued frames as current");
+            probe.processBlock(block, midi);
+            const int recentCount = probe.drainSpectra(recent.data(), int(recent.size()), .15);
+            check(recentCount > 0 && recentCount < 32,
+                  "stalled display did not resume with recent frames");
+
+            probe.prepareToPlay(48000, 8192);
+            probe.processBlock(block, midi);
+            probe.requestClearBuffer();
+            juce::AudioBuffer<float> shortBlock(2, 256);
+            shortBlock.clear();
+            probe.processBlock(shortBlock, midi);
+            check(!probe.nextSpectrum(frame),
+                  "clear exposed pre-clear or fade-transition analyzer frames");
+            probe.processBlock(block, midi);
+            check(probe.nextSpectrum(frame) && frame.seconds > 8192. / 48000,
+                  "clear retained queued pre-clear analyzer frames");
+        }
+        {
+            Processor gestureProbe;
+            gestureProbe.prepareToPlay(48000, 512);
+            std::unique_ptr<juce::AudioProcessorEditor> editor(
+                gestureProbe.createEditorAndMakeActive());
+            auto *view = dynamic_cast<Editor *>(editor.get());
+            check(view != nullptr, "drawing gesture editor");
+            const auto before = gestureProbe.getCurves().values[0][0];
+            const auto now = juce::Time::getCurrentTime();
+            const juce::Point<float> position{100, 200};
+            juce::MouseEvent mouse(juce::Desktop::getInstance().getMainMouseSource(), position,
+                                   juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier),
+                                   0, 0, 0, 0, 0, view, view, now, position, now, 1, false);
+            view->mouseDown(mouse);
+            check(gestureProbe.getCurves().values[0][0] != before,
+                  "drawing gesture test did not change a curve");
+            auto *size = gestureProbe.state.getParameter("stftSize");
+            size->setValueNotifyingHost(size->convertTo0to1(7));
+            view->refreshDisplay(juce::Time::getMillisecondCounterHiRes() * .001);
+            view->mouseUp(mouse);
+            check(gestureProbe.getCurves().values[0][0] == before,
+                  "automated STFT change committed a partial drawing gesture");
+            gestureProbe.editorBeingDeleted(editor.get());
         }
         Processor p;
         auto banks = p.getBanks();

@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <limits>
 Editor::Editor(Processor &processor)
     : AudioProcessorEditor(processor), p(processor), resolutionControl(stftSize, "Resolution"),
       scrollControl(scrollSpeed, "Scroll")
@@ -84,6 +85,7 @@ Editor::Editor(Processor &processor)
     scrollSpeed.onChange = [this]
     {
         p.spectrogramSpeed = scrollSpeed.getSelectedId() - 1;
+        activeScrollSpeed = p.spectrogramSpeed.load();
         delayHistory.setSpeed(p.spectrogramSpeed.load());
         resetDisplayHistory();
         scrollControl.repaint();
@@ -268,7 +270,7 @@ void Editor::loadDefaultPreset()
 }
 void Editor::resetDisplayHistory()
 {
-    p.discardSpectra();
+    p.restartSpectra();
     delayHistory.clear();
     for (auto &channel : magnitudes)
         channel.fill(0);
@@ -331,6 +333,8 @@ void Editor::timerCallback()
 }
 void Editor::refreshDisplay(double nowSeconds)
 {
+    if ((lastBin >= 0 || pointGesture) && gestureSize != buckets().size)
+        cancelGesture();
     auto banks = p.getBanks();
     if (p.pointMode) ensurePoints();
     drawMode.setToggleState(!p.pointMode.load(), juce::dontSendNotification);
@@ -347,14 +351,19 @@ void Editor::refreshDisplay(double nowSeconds)
     channelButton.setButtonText(p.selectedChannel.load() == 0 ? "Channel: L" : "Channel: R");
     p.publishPending();
     const int speed = p.spectrogramSpeed.load();
+    if (speed != activeScrollSpeed)
+    {
+        activeScrollSpeed = speed;
+        resetDisplayHistory();
+    }
     scrollSpeed.setSelectedId(speed + 1, juce::dontSendNotification);
     delayHistory.setSpeed(speed);
     scrollControl.refresh();
     resolutionControl.refresh();
-    int receivedCount = 0;
-    while (receivedCount < int(displayFrames.size()) &&
-           p.nextSpectrum(displayFrames[size_t(receivedCount)]))
-        ++receivedCount;
+    const bool stalled = lastDisplayArrival >= 0 && nowSeconds - lastDisplayArrival > .15;
+    const int receivedCount = p.drainSpectra(
+        displayFrames.data(), int(displayFrames.size()),
+        stalled ? .15 : std::numeric_limits<double>::infinity());
     const bool received = receivedCount > 0;
     const auto &fresh = displayFrames[size_t(std::max(0, receivedCount - 1))];
     if constexpr (!SPECTRAL_DIAGNOSTIC)
@@ -667,7 +676,7 @@ void Editor::drawAt(juce::Point<float> point)
     const auto layout = buckets();
     if (lastBin >= 0 && gestureSize != layout.size)
     {
-        finishGesture();
+        cancelGesture();
         return;
     }
     int k = layout.binAt(point.x), t = p.selectedCurve, ch = p.selectedChannel;
@@ -777,7 +786,7 @@ void Editor::mouseDrag(const juce::MouseEvent &e)
 {
     if (pointGesture && selectedSegment >= 0)
     {
-        if (gestureSize != buckets().size) { finishGesture(); return; }
+        if (gestureSize != buckets().size) { cancelGesture(); return; }
         auto points = p.getPointCurves();
         auto &curve = points.banks[p.selectedBank][p.selectedChannel][p.selectedCurve];
         const float value = (plot.getBottom() - e.position.y) / plot.getHeight() + handleDragOffset;
@@ -787,7 +796,7 @@ void Editor::mouseDrag(const juce::MouseEvent &e)
     }
     else if (pointGesture && selectedPoint >= 0)
     {
-        if (gestureSize != buckets().size) { finishGesture(); return; }
+        if (gestureSize != buckets().size) { cancelGesture(); return; }
         auto points = p.getPointCurves();
         auto &curve = points.banks[p.selectedBank][p.selectedChannel][p.selectedCurve];
         if (selectedPoint >= curve.count) return;
@@ -803,7 +812,21 @@ void Editor::mouseDrag(const juce::MouseEvent &e)
 }
 void Editor::mouseUp(const juce::MouseEvent &)
 {
-    finishGesture();
+    if ((lastBin >= 0 || pointGesture) && gestureSize != buckets().size)
+        cancelGesture();
+    else
+        finishGesture();
+}
+void Editor::cancelGesture()
+{
+    if (lastBin < 0 && !pointGesture)
+        return;
+    p.updateBanks(beforeBanks.banks);
+    p.setPointCurves(beforeBanks.points);
+    lastBin = -1;
+    pointGesture = false;
+    selectedPoint = selectedSegment = -1;
+    repaint();
 }
 void Editor::finishGesture()
 {
@@ -837,16 +860,8 @@ void Editor::ensurePoints()
     if (curve.count) return;
     const auto source = p.getCurves().values[p.selectedChannel][p.selectedCurve];
     const double sr = p.getSampleRate() > 0 ? p.getSampleRate() : 48000.;
-    // Seed a representation of the existing curve without changing its audio until edited.
-    const auto [minimum, maximum] = std::minmax_element(source.begin(), source.end());
-    curve.count = *maximum - *minimum < .00001f ? 2 : 32;
-    for (int i = 0; i < curve.count; ++i)
-    {
-        float x = float(i) / (curve.count - 1);
-        float index = float(std::clamp(20. * std::pow(1000., x) * spectral::N / sr, 0., double(spectral::B - 1)));
-        int lo = int(index), hi = std::min(lo + 1, spectral::B - 1);
-        curve.points[i] = {x, source[lo] + (index - lo) * (source[hi] - source[lo]), 0};
-    }
+    // Conversion is adaptive so narrow drawn peaks survive the first point edit.
+    curve = spectral::PointCurve::fromCurve(source, sr);
     p.setPointCurves(points);
 }
 void Editor::applyPointCurve()
