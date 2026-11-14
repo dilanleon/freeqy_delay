@@ -11,6 +11,14 @@ class EditorStyle final : public juce::LookAndFeel_V4
         setColour(juce::Slider::textBoxBackgroundColourId, freeqy::well);
         setColour(juce::Slider::textBoxOutlineColourId, freeqy::blueViolet);
         setColour(juce::Slider::textBoxHighlightColourId, freeqy::violet);
+        setColour(juce::ComboBox::backgroundColourId, freeqy::panel);
+        setColour(juce::ComboBox::outlineColourId, freeqy::blueViolet);
+        setColour(juce::ComboBox::textColourId, freeqy::cyan);
+        setColour(juce::ComboBox::arrowColourId, freeqy::cyan);
+        setColour(juce::PopupMenu::backgroundColourId, freeqy::panel);
+        setColour(juce::PopupMenu::textColourId, freeqy::cyan);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, freeqy::deepViolet);
+        setColour(juce::PopupMenu::highlightedTextColourId, freeqy::cyan);
     }
     void drawButtonBackground(juce::Graphics &g, juce::Button &button, const juce::Colour &,
                               bool over, bool down) override
@@ -76,7 +84,8 @@ class EditorStyle final : public juce::LookAndFeel_V4
             for (int side = 0; side < 2; ++side)
             {
                 const float xx = x + (side == 0 ? -6 : 6);
-                const float direction = side == 1 && button.getToggleState() ? -1.f : 1.f;
+                const bool opposite = button.getToggleState();
+                const float direction = side == 1 && opposite ? -1.f : 1.f;
                 g.drawLine(xx, y + direction * 9, xx, y - direction * 9, 1.5f);
                 g.drawLine(xx, y - direction * 9, xx - 4, y - direction * 4, 1.5f);
                 g.drawLine(xx, y - direction * 9, xx + 4, y - direction * 4, 1.5f);
@@ -176,6 +185,16 @@ class EditorStyle final : public juce::LookAndFeel_V4
     }
 
   public:
+    static juce::NormalisableRange<double> shiftDepthRange()
+    {
+        // Offset-log mapping gives zero an exact position while spacing small shifts finely.
+        constexpr double offsetHz = 20.;
+        return {0., 1000.,
+                [](double start, double end, double position)
+                { return start + offsetHz * std::expm1(position * std::log1p((end - start) / offsetHz)); },
+                [](double start, double end, double value)
+                { return std::log1p((value - start) / offsetHz) / std::log1p((end - start) / offsetHz); }};
+    }
     static void drawSegmentDisplay(juce::Graphics &g, juce::Rectangle<int> bounds,
                                    const juce::String &text)
     {
@@ -307,7 +326,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
 };
 
 // Buttons step existing choices; the hidden ComboBox retains its host attachment.
-class ChoiceStepper final : public juce::Component
+class ChoiceStepper final : public juce::Component, public juce::SettableTooltipClient
 {
   public:
     ChoiceStepper(juce::ComboBox &model, juce::String caption)
@@ -320,6 +339,12 @@ class ChoiceStepper final : public juce::Component
         less.setTooltip(title + ": previous setting");
         more.setTooltip(title + ": next setting");
         setName(title);
+    }
+    void setHelpText(const juce::String &text)
+    {
+        setTooltip(text);
+        less.setTooltip(text);
+        more.setTooltip(text);
     }
     void refresh()
     {

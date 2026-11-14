@@ -33,12 +33,11 @@ void Engine::configureSize(int requested)
     for (int ch = 0; ch < 2; ++ch)
         for (int k = 0; k < bins; ++k)
         {
-            const float index =
-                CurveBanks::shiftedIndex(float(k * (B - 1)) / (bins - 1), offsets[ch], sr);
-            channels[ch].delay[k] =
-                banks.sample(ch, 0, index, positions[ch]) * settings.maxDelayMs * float(sr) / 1000;
-            channels[ch].feedback[k] = banks.sample(ch, 1, index, positions[ch]);
-            channels[ch].level[k] = banks.sample(ch, 2, index, positions[ch]);
+            const float index = float(k * (B - 1)) / (bins - 1);
+            channels[ch].delay[k] = banks.shiftedSample(ch, 0, index, offsets[ch], sr, positions[ch]) *
+                                    settings.maxDelayMs * float(sr) / 1000;
+            channels[ch].feedback[k] = banks.shiftedSample(ch, 1, index, offsets[ch], sr, positions[ch]);
+            channels[ch].level[k] = banks.shiftedSample(ch, 2, index, offsets[ch], sr, positions[ch]);
         }
 }
 void Engine::reset()
@@ -48,7 +47,7 @@ void Engine::reset()
     morphPosition = settings.morphPercent;
     morphDepth = settings.morphDepth;
     morphRate = settings.morphRateHz;
-    morphStereoBlend = settings.stereoMorph ? 1.f : 0.f;
+    morphDirectionBlend = settings.stereoMorph ? 1.f : 0.f;
     morphHold = settings.morphRateHz == 0 ? 1.f : 0.f;
     morphPhase = std::numbers::pi / 2;
     clearPending = false;
@@ -119,7 +118,7 @@ void Engine::transform()
     const auto positions = morphPositions();
     const auto offsets = shiftOffsets();
     auto curveValue = [&](int ch, int type, float index)
-    { return banks.sample(ch, type, index, positions[ch]); };
+    { return banks.shiftedSample(ch, type, index, offsets[ch], sr, positions[ch]); };
     float ds = 1 - std::exp(-float(step) / (float(sr) * .05f)),
           gs = 1 - std::exp(-float(step) / (float(sr) * .02f));
     for (int ch = 0; ch < numChannels; ++ch)
@@ -130,8 +129,7 @@ void Engine::transform()
         transforms[order]->performRealOnlyForwardTransform(channel.fft.data(), true);
         for (int k = 0; k < bins; ++k)
         {
-            const float index =
-                CurveBanks::shiftedIndex(float(k * (B - 1)) / (bins - 1), offsets[ch], sr);
+            const float index = float(k * (B - 1)) / (bins - 1);
             channel.delay[k] +=
                 ds * (curveValue(ch, 0, index) * settings.maxDelayMs * float(sr) / 1000 -
                       channel.delay[k]);
@@ -184,9 +182,9 @@ void Engine::process(float *const *data, int count, bool bypass)
         morphDepth += a * (settings.morphDepth - morphDepth);
         morphRate += a * (settings.morphRateHz - morphRate);
         morphHold += a * ((settings.morphRateHz == 0 ? 1.f : 0.f) - morphHold);
-        morphStereoBlend += a * ((settings.stereoMorph ? 1.f : 0.f) - morphStereoBlend);
-        if (morphStereoBlend < 1e-7f)
-            morphStereoBlend = 0;
+        morphDirectionBlend += a * ((settings.stereoMorph ? 1.f : 0.f) - morphDirectionBlend);
+        if (morphDepth < 1e-7f)
+            morphDepth = 0;
         mix += a * (settings.mix - mix);
         inGain += a * (targetIn - inGain);
         outGain += a * (targetOut - outGain);

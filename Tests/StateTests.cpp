@@ -14,6 +14,76 @@ int main(int argc, char **argv)
     juce::ScopedJuceInitialiser_GUI init;
     try
     {
+        {
+            Processor presetProcessor;
+            auto editor = std::unique_ptr<juce::AudioProcessorEditor>(presetProcessor.createEditorAndMakeActive());
+            juce::ComboBox *menu = nullptr;
+            juce::Slider *shiftDepth = nullptr;
+            for (auto *child : editor->getChildren())
+            {
+                if (child->getName() == "Preset menu") menu = dynamic_cast<juce::ComboBox *>(child);
+                if (child->getName() == "shiftHz") shiftDepth = dynamic_cast<juce::Slider *>(child);
+            }
+            check(shiftDepth && shiftDepth->proportionOfLengthToValue(0) == 0 &&
+                      std::abs(shiftDepth->proportionOfLengthToValue(1) - 1000) < .001 &&
+                      std::abs(shiftDepth->proportionOfLengthToValue(.5) - 122.8286) < .01 &&
+                      std::abs(shiftDepth->valueToProportionOfLength(shiftDepth->proportionOfLengthToValue(.3)) - .3) < .0001,
+                  "logarithmic curve shift knob");
+            check(std::abs(presetProcessor.state.getParameter("shiftHz")->convertFrom0to1(.5f) - 250.f) < .01f,
+                  "curve shift host automation mapping changed");
+            check(menu && menu->getNumItems() == 1 && menu->getItemText(0) == "Default",
+                  "default preset menu");
+            auto *mix = presetProcessor.state.getParameter("mix");
+            mix->setValueNotifyingHost(1.f);
+            presetProcessor.selectedBank = 3;
+            menu->setSelectedId(1, juce::sendNotificationSync);
+            for (const char *id : {"shiftHz", "shiftRateHz", "inputTrimDb", "outputTrimDb",
+                                   "curveMorph", "stereoMorph", "morphDepth", "morphRateHz"})
+                check(std::abs(presetProcessor.state.getRawParameterValue(id)->load()) < .0001f,
+                      "default preset parameter not zero");
+            check(std::abs(presetProcessor.state.getRawParameterValue("maxDelayMs")->load() - 1000.f) < .01f &&
+                      presetProcessor.state.getRawParameterValue("stftSize")->load() == 6 &&
+                      std::abs(presetProcessor.state.getRawParameterValue("mix")->load() - .5f) < .0001f,
+                  "default preset delay, resolution and wet");
+            auto presetBanks = presetProcessor.getBanks();
+            check(presetBanks.count == 1 && presetProcessor.selectedBank == 0,
+                  "default preset bank count");
+            for (const auto &bank : presetBanks.banks)
+                for (const auto &channel : bank.values)
+                    for (int type = 0; type < 3; ++type)
+                        for (float value : channel[type])
+                            check(value == (type == 0 ? .25f : type == 1 ? .35f : 1.f),
+                                  "default preset curve value");
+            mix->setValueNotifyingHost(1.f);
+            menu->setSelectedId(1, juce::sendNotificationSync);
+            check(std::abs(presetProcessor.state.getRawParameterValue("mix")->load() - .5f) < .0001f,
+                  "default preset cannot be reloaded");
+            presetProcessor.editorBeingDeleted(editor.get());
+        }
+        spectral::PointCurve pointCurve;
+        pointCurve.count = 2;
+        pointCurve.points[0] = {0, 0, 0};
+        pointCurve.points[1] = {1, 1, 0};
+        check(std::abs(pointCurve.valueAt(.5f) - .5f) < .0001f, "linear point segment");
+        pointCurve.points[0].shape = 1;
+        check(pointCurve.valueAt(.5f) < .5f, "exponential point segment");
+        pointCurve.points[0].shape = -1;
+        check(pointCurve.valueAt(.5f) > .5f, "logarithmic point segment");
+        check(pointCurve.setMidpointValue(0, .7f) &&
+              std::abs(pointCurve.valueAt(.5f) - .7f) < .0001f, "midpoint handle ascending");
+        pointCurve.points[0].value = 1;
+        pointCurve.points[1].value = 0;
+        check(pointCurve.setMidpointValue(0, .7f) &&
+              std::abs(pointCurve.valueAt(.5f) - .7f) < .0001f, "midpoint handle descending");
+        pointCurve.points[1].value = 1;
+        const float shapeBeforeFlat = pointCurve.points[0].shape;
+        check(!pointCurve.setMidpointValue(0, .2f) && pointCurve.points[0].shape == shapeBeforeFlat,
+              "flat midpoint handle changes shape");
+        pointCurve.points[0] = {0, 0, -1};
+        pointCurve.points[1] = {1, 1, 0};
+        spectral::Curve rendered;
+        pointCurve.render(rendered, 48000);
+        check(rendered.front() == 0 && rendered.back() == 1, "point endpoint holds");
         // Values use the same display convention at automation boundaries as in the editor.
         juce::Slider maximumDelay;
         maximumDelay.setName("maxDelayMs");
@@ -333,13 +403,28 @@ int main(int argc, char **argv)
                     {
                         float x = float(i) / (spectral::B - 1);
                         demo.banks[b].values[ch][0][i] =
-                            .12f + .65f * std::pow(std::sin(x * 11 + b * .2f), 2);
+                            .12f + .65f * std::pow(std::sin(x * 11 + b * .2f + ch * .35f), 2);
                         demo.banks[b].values[ch][1][i] =
                             .1f + .45f * std::pow(std::cos(x * 8 + b * .15f), 2);
                         demo.banks[b].values[ch][2][i] =
                             .45f + .5f * std::pow(std::sin(x * 5 + b * .3f), 2);
                     }
             p.updateBanks(demo);
+            if (argc > 6)
+            {
+                auto points = p.getPointCurves();
+                auto &curve = points.banks[p.selectedBank][p.selectedChannel][p.selectedCurve];
+                curve.count = 4;
+                curve.points[0] = {0, .2f, -0.6f};
+                curve.points[1] = {.3f, .8f, .5f};
+                curve.points[2] = {.7f, .35f, 0};
+                curve.points[3] = {1, .35f, 0};
+                p.setPointCurves(points);
+                auto curves = p.getCurves();
+                curve.render(curves.values[p.selectedChannel][p.selectedCurve], 48000);
+                p.updateCurves(curves);
+                p.pointMode = true;
+            }
             if (argc > 5)
                 p.spectrogramSpeed = juce::jlimit(0, 3, juce::String(argv[5]).getIntValue());
             std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditorAndMakeActive());
@@ -373,6 +458,8 @@ int main(int argc, char **argv)
                                          *output),
                   "snapshot render");
             p.editorBeingDeleted(editor.get());
+            p.pointMode = false;
+            p.setPointCurves({});
             p.updateBanks(originalBanks);
             p.state.getParameter("stftSize")
                 ->setValueNotifyingHost(p.state.getParameter("stftSize")->convertTo0to1(3));
@@ -434,6 +521,10 @@ int main(int argc, char **argv)
             button("Bank 3")->onClick();
             p.editorBeingDeleted(editor.get());
         }
+        auto pointState = p.getPointCurves();
+        pointState.banks[2][1][0] = pointCurve;
+        p.setPointCurves(pointState);
+        p.pointMode = true;
         p.spectrogramSpeed = 0;
         juce::MemoryBlock bytes;
         p.getStateInformation(bytes);
@@ -449,6 +540,9 @@ int main(int argc, char **argv)
         Processor restored;
         restored.setStateInformation(bytes.getData(), int(bytes.getSize()));
         check(restored.spectrogramSpeed == 0, "spectrogram speed state recall");
+        const auto recalledPoints = restored.getPointCurves();
+        check(restored.pointMode && recalledPoints.banks[2][1][0].count == 2 &&
+              recalledPoints.banks[2][1][0].points[0].shape == -1, "point state recall");
         auto saved = restored.getBanks();
         check(saved.count == 3 && restored.selectedBank == 2, "bank settings recall");
         for (int b = 0; b < 4; ++b)

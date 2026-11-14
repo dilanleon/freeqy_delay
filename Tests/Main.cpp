@@ -245,6 +245,37 @@ int main()
                             relativeError(right, source, Latency) < -90,
                         "curve shift must preserve audio frequency with flat maps");
             }
+        // Curve-shift modulation uses a symmetric logarithmic sweep with an exact peak.
+        {
+            Engine e;
+            Settings s;
+            s.shiftHz = 1000;
+            s.shiftRateHz = 1;
+            e.setSettings(s);
+            e.prepare(48000, 2);
+            require(std::abs(e.shiftOffsets()[0] - 1000.f) < .01f, "shift modulation peak");
+            std::vector<float> left(8000), right(8000);
+            run(e, left, right);
+            const auto positive = e.shiftOffsets();
+            require(std::abs(positive[0] - 610.5236f) < .02f && positive[0] == -positive[1],
+                    "logarithmic positive shift modulation");
+            left.assign(8000, 0); right = left;
+            run(e, left, right);
+            const auto negative = e.shiftOffsets();
+            require(std::abs(negative[0] + 610.5236f) < .02f && negative[0] == -negative[1],
+                    "logarithmic negative shift modulation");
+            left.assign(19999, 0); right = left;
+            run(e, left, right);
+            const float beforeZero = e.shiftOffsets()[0];
+            left.assign(1, 0); right = left;
+            run(e, left, right);
+            const float atZero = e.shiftOffsets()[0];
+            run(e, left, right);
+            const float afterZero = e.shiftOffsets()[0];
+            require(std::abs(atZero) < .001f && beforeZero < 0 && afterZero > 0 &&
+                        std::abs((atZero - beforeZero) - (afterZero - atZero)) < .001f,
+                    "shift modulation smooth zero crossing");
+        }
         // Entering the zero-rate hold is smoothed instead of snapping to full offset.
         {
             Engine e;
@@ -300,6 +331,47 @@ int main()
             require(CurveBanks::shiftedIndex(0, 1000, 48000) == 0 &&
                         CurveBanks::shiftedIndex(B - 1, -1000, 48000) == B - 1,
                     "curve shift holds spectrum edges");
+            for (double sr : {44100., 48000., 96000., 192000.})
+                for (float offset : {-1000.f, -100.f, 100.f, 1000.f})
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int type = 0; type < 3; ++type)
+                        {
+                            const float first = float(20. * N / sr);
+                            const float low = float(75. * N / sr);
+                            const float high = float(19000. * N / sr);
+                            const float end = float(20000. * N / sr);
+                            const float shift = float(offset * N / sr);
+                            const float lowJoin = low + std::max(0.f, shift);
+                            const float highJoin = high + std::min(0.f, shift);
+                            auto value = [&](float index, float displacement)
+                            { return b.shiftedSample(ch, type, index, displacement, sr, 25); };
+                            auto raw = [&](float index) { return b.sample(ch, type, index, 25); };
+                            auto shifted = [&](float index)
+                            { return raw(CurveBanks::shiftedIndex(index, offset, sr)); };
+                            require(std::abs(value(first, offset) - raw(first)) < 1e-6 &&
+                                        std::abs(value(end, offset) - raw(end)) < 1e-6,
+                                    "shift endpoints must remain pinned");
+                            require(std::abs(value(lowJoin, offset) - shifted(lowJoin)) < 1e-6 &&
+                                        std::abs(value(highJoin, offset) - shifted(highJoin)) < 1e-6,
+                                    "shift joins must meet moving curve");
+                            const float lowMid = (first + lowJoin) * .5f;
+                            require(std::abs(value(lowMid, offset) -
+                                             .5f * (raw(first) + shifted(lowJoin))) < 1e-6 &&
+                                        std::abs(value(lowMid, offset) - raw(first)) > 1e-6,
+                                    "low edge should interpolate, not clamp flat");
+                            if (std::abs(offset) >= 1000.f)
+                            {
+                                const float highMid = (highJoin + end) * .5f;
+                                require(std::abs(value(highMid, offset) -
+                                                 .5f * (shifted(highJoin) + raw(end))) < 1e-6 &&
+                                            std::abs(value(highMid, offset) - raw(end)) > 1e-6,
+                                        "high edge should interpolate, not clamp flat");
+                            }
+                            const float originalIndex = (first + low) * .5f;
+                            require(std::abs(value(originalIndex, 0) - raw(originalIndex)) < 1e-6 &&
+                                        std::abs(value(originalIndex, .001f) - value(originalIndex, -.001f)) < .00001f,
+                                    "edge shift must preserve curve and remain continuous at zero");
+                        }
         }
         // A shifted level band passes the original tone on one side, without new pitches.
         for (float offset : {500.f, -500.f})
@@ -448,6 +520,35 @@ int main()
             }
             require(separation > .05f, "stereo morph not moving");
             s.stereoMorph = false;
+            s.morphRateHz = 0;
+            s.morphPercent = 50;
+            e.setSettings(s);
+            e.reset();
+            left.assign(24000, .2f);
+            right = left;
+            run(e, left, right);
+            require(std::abs(left.back() - .15f) < 1e-5 && std::abs(right.back() - .15f) < 1e-5,
+                    "same-direction held morph");
+            s.morphRateHz = 1;
+            e.setSettings(s);
+            left.assign(48000, .2f);
+            right = left;
+            run(e, left, right);
+            float movement = 0;
+            for (int n = 5000; n < 48000; ++n)
+            {
+                require(std::abs(left[n] - right[n]) < 1e-5, "same-direction stereo separation");
+                movement = std::max(movement, std::abs(left[n] - .1f));
+            }
+            require(movement > .02f, "same-direction morph not moving");
+            s.stereoMorph = true;
+            e.setSettings(s);
+            auto beforeDirectionChange = e.morphPositions();
+            left.assign(1, 0); right = left;
+            run(e, left, right);
+            require(std::abs(e.morphPositions()[1] - beforeDirectionChange[1]) < .2f,
+                    "morph direction transition jumped");
+            s.morphDepth = 0;
             e.setSettings(s);
             left.assign(24000, .2f);
             right = left;
@@ -465,7 +566,7 @@ int main()
             run(e, left, right);
             require(std::abs(left.back() - .01f) < 1e-5 && std::abs(right.back() - .17f) < 1e-5,
                     "audible wrapped morph");
-            s.stereoMorph = false;
+            s.morphDepth = 0;
             s.morphPercent = 100;
             e.setSettings(s);
             e.reset();

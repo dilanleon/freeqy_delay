@@ -46,6 +46,40 @@ struct CurveBanks
     {
         return std::clamp(index - offsetHz * float(N / sampleRate), 0.f, float(B - 1));
     }
+    // Keep the visible endpoints fixed and connect them to the shifted curve.
+    // The transition follows the moving anchor so a large shift cannot leave a
+    // flat shelf where its source lookup would otherwise be clamped.
+    float shiftedSample(int ch, int type, float index, float offsetHz, double sampleRate,
+                        float percent) const
+    {
+        const float last = float(B - 1);
+        index = std::clamp(index, 0.f, last);
+        const float hzPerIndex = float(sampleRate / N);
+        const float first = std::min(20.f / hzPerIndex, last);
+        const float low = std::min(75.f / hzPerIndex, last);
+        const float high = std::min(19000.f / hzPerIndex, last);
+        const float visibleLast = std::min(20000.f / hzPerIndex, last);
+        if (index <= first || index >= visibleLast)
+            return sample(ch, type, index, percent);
+        const float shift = offsetHz / hzPerIndex;
+        const float lowJoin = std::min(visibleLast, low + std::max(0.f, shift));
+        const float highJoin = std::max(lowJoin, high + std::min(0.f, shift));
+        auto connect = [&](float a, float b, float sourceA, float sourceB, float blend)
+        {
+            const float t = std::clamp((index - a) / (b - a), 0.f, 1.f);
+            const float mapped = sample(ch, type, sourceA + t * (sourceB - sourceA), percent);
+            const float left = sample(ch, type, sourceA, percent);
+            const float right = sample(ch, type, sourceB, percent);
+            return mapped + blend * (left + t * (right - left) - mapped);
+        };
+        if (index < lowJoin && lowJoin > first)
+            return connect(first, lowJoin, first, shiftedIndex(lowJoin, offsetHz, sampleRate),
+                           std::min(1.f, std::abs(offsetHz) / 55.f));
+        if (index > highJoin && highJoin < visibleLast)
+            return connect(highJoin, visibleLast, shiftedIndex(highJoin, offsetHz, sampleRate),
+                           visibleLast, std::min(1.f, std::abs(offsetHz) / 1000.f));
+        return sample(ch, type, shiftedIndex(index, offsetHz, sampleRate), percent);
+    }
     void blend(float percent, Curves &result) const
     {
         const int active = std::clamp(count, 1, 4);
@@ -64,7 +98,7 @@ constexpr int MaxFft = 2048, Latency = MaxFft;
 struct Settings
 {
     float mix = .5f, maxDelayMs = 1000, shiftHz = 0, shiftRateHz = .3f, inputTrimDb = 0,
-          outputTrimDb = 0, morphPercent = 0, morphDepth = 25, morphRateHz = .3f;
+          outputTrimDb = 0, morphPercent = 0, morphDepth = 0, morphRateHz = .3f;
     bool stereoMorph = false;
     int fftSize = 1024;
 };
@@ -99,15 +133,21 @@ class Engine
     }
     std::array<float, 2> morphPositions() const
     {
-        if (morphStereoBlend == 0 || morphDepth == 0)
+        if (morphDepth == 0)
             return {morphPosition, morphPosition};
-        return stereoPositions(morphPosition, morphDepth,
-                               morphStereoBlend *
-                                   float(std::sin(morphPhase) * (1 - morphHold) + morphHold));
+        const float movement = float(std::sin(morphPhase) * (1 - morphHold) + morphHold);
+        auto wrap = [](float value) { return value - 100.f * std::floor(value / 100.f); };
+        return {wrap(morphPosition + morphDepth * movement),
+                wrap(morphPosition + morphDepth * movement * (1.f - 2.f * morphDirectionBlend))};
     }
     std::array<float, 2> shiftOffsets() const
     {
-        const float offset = amount * float(std::sin(lfoPhase) * (1 - shiftHold) + shiftHold);
+        const float phase = float(std::sin(lfoPhase) * (1 - shiftHold) + shiftHold);
+        // asinh gives a symmetric logarithmic response with a continuous, moderate
+        // slope through zero and reaches the requested depth at both peaks.
+        constexpr float shape = 2.f;
+        constexpr float normalizer = 1.443635475f; // asinh(2)
+        const float offset = amount * std::asinh(shape * phase) / normalizer;
         return {offset, -offset};
     }
     const StereoSpectrum &delaySpectrum() const
@@ -139,7 +179,7 @@ class Engine
     SpectrumAnalyzer delayAnalyzer;
     CurveBanks banks;
     double sr = 48000, lfoPhase = 0, morphPhase = 0;
-    float morphDepth = 25, morphRate = .3f, morphStereoBlend = 0, morphHold = 0;
+    float morphDepth = 0, morphRate = .3f, morphHold = 0, morphDirectionBlend = 0;
     int numChannels = 2, size = 1024, step = 128, bins = 513, order = 6, frames = 0;
     int pos = 0, hop = 0, frame = 0, dryPos = 0, alignPos = 0;
     float mix = .5f, inGain = 1, outGain = 1, morphPosition = 0, amount = 0, rate = .3f,

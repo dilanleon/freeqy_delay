@@ -1,3 +1,4 @@
+#include "PointCurves.h"
 #pragma once
 #include "Engine.h"
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -64,6 +65,9 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     spectral::CurveBanks getBanks();
     void updateBanks(const spectral::CurveBanks &);
     void publishPending();
+    spectral::PointCurves getPointCurves();
+    void setPointCurves(const spectral::PointCurves &);
+    std::atomic<bool> pointMode{false};
     void requestClearBuffer()
     {
         clearRequested.store(true, std::memory_order_release);
@@ -93,6 +97,7 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     std::array<std::atomic<float>, 2> liveMorph{}, liveShift{};
     std::mutex modelMutex;
     spectral::CurveBanks model;
+    spectral::PointCurves pointModel;
     juce::AbstractFifo curveFifo{4}, spectrumFifo{128};
     std::array<spectral::CurveBanks, 4> curveQueue;
     std::vector<Spectrum> spectrumQueue = std::vector<Spectrum>(128);

@@ -1,5 +1,32 @@
+#include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <juce_audio_processors/juce_audio_processors.h>
+
+struct StagedBundle
+{
+    explicit StagedBundle(const std::filesystem::path &source)
+    {
+        const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+        root = std::filesystem::temp_directory_path() /
+               ("freeqy-vst3-check-" + std::to_string(nonce));
+        bundle = root / source.filename();
+        std::filesystem::create_directories(root);
+        std::filesystem::copy(source, bundle,
+                              std::filesystem::copy_options::recursive |
+                                  std::filesystem::copy_options::copy_symlinks);
+    }
+
+    ~StagedBundle()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+    }
+
+    std::filesystem::path root;
+    std::filesystem::path bundle;
+};
+
 int main(int argc, char **argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -8,9 +35,13 @@ int main(int argc, char **argv)
     bool diagnostic = argc > 2;
     juce::VST3PluginFormat format;
     juce::OwnedArray<juce::PluginDescription> types;
-    const auto path = juce::File::isAbsolutePath(argv[1])
-                          ? juce::File(argv[1])
-                          : juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]);
+    const auto source = juce::File::isAbsolutePath(argv[1])
+                            ? juce::File(argv[1])
+                            : juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]);
+    // Match an installed host path and avoid macOS 26 dyld stalls on freshly
+    // packaged signed bundles inside a sync-managed Documents workspace.
+    StagedBundle staged(std::filesystem::path(source.getFullPathName().toStdString()));
+    const juce::File path(staged.bundle.string());
     format.findAllTypesForFile(types, path.getFullPathName());
     if (types.isEmpty())
     {

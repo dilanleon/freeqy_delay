@@ -28,15 +28,23 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     std::array<juce::Slider, 6> knobs;
     std::array<juce::Label, 6> labels;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
-    juce::ComboBox stftSize, scrollSpeed;
+    juce::ComboBox stftSize, scrollSpeed, presetMenu;
     ChoiceStepper resolutionControl, scrollControl;
+    juce::TextButton drawMode{"Draw"}, pointsMode{"Points"};
+    int selectedPoint = -1, selectedSegment = -1;
+    float handleDragOffset = 0;
+    bool pointGesture = false;
+    struct Snapshot { spectral::CurveBanks banks; spectral::PointCurves points; };
+    Snapshot snapshot();
+    void applyPointCurve();
+    void ensurePoints();
     juce::TextButton bankLess{"-"}, bankMore{"+"};
     std::array<juce::TextButton, 3> parameterButtons;
     std::array<juce::TextButton, 4> bankButtons;
     juce::TextButton channelButton;
     juce::Slider morph, morphDepth, morphRate;
     juce::Label morphLabel, morphDepthLabel, morphRateLabel;
-    juce::ToggleButton stereoMorph{"Stereo Morph"};
+    juce::ToggleButton stereoMorph{"Morph direction"};
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> morphDepthAttachment,
         morphRateAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> stereoMorphAttachment;
@@ -49,8 +57,8 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     std::vector<Processor::Spectrum> displayFrames = std::vector<Processor::Spectrum>(128);
     double displayClockOffset = 0, lastDisplayAudio = -1, lastDisplayArrival = -1;
     spectral::Curves drawing;
-    spectral::CurveBanks beforeBanks;
-    std::vector<spectral::CurveBanks> undoStack, redoStack;
+    Snapshot beforeBanks;
+    std::vector<Snapshot> undoStack, redoStack;
     juce::Rectangle<int> plot, curvePanel, delayPanel, shiftPanel, gainPanel, morphPanel, mixPanel,
         toolbar, bankTools;
     juce::TextButton clearBuffer{"Clear Buffer"};
@@ -66,4 +74,5 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     void changeBankCount(int delta);
     void stepHistory(bool backwards);
     void resetDisplayHistory();
+    void loadDefaultPreset();
 };

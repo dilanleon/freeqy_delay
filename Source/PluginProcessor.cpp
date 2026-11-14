@@ -40,7 +40,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Processor::layout()
                                          { return text.getFloatValue(); })));
     p.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"stereoMorph", 1},
                                                      "Stereo Morph", false));
-    add("morphDepth", "Stereo Morph Depth (%)", 0, 100, 25);
+    add("morphDepth", "Stereo Morph Depth (%)", 0, 100, 0);
     add("morphRateHz", "Stereo Morph Rate (Hz)", 0, 10, .3f, .5f);
     return p;
 }
@@ -76,6 +76,16 @@ void Processor::prepareToPlay(double sr, int)
     meterSampleRate = sr;
     sinePhase = 0;
     setLatencySamples(SPECTRAL_DIAGNOSTIC ? 0 : spectral::Latency);
+}
+spectral::PointCurves Processor::getPointCurves()
+{
+    std::lock_guard lock(modelMutex);
+    return pointModel;
+}
+void Processor::setPointCurves(const spectral::PointCurves &points)
+{
+    std::lock_guard lock(modelMutex);
+    pointModel = points;
 }
 spectral::Curves Processor::getCurves()
 {
@@ -266,6 +276,9 @@ void Processor::getStateInformation(juce::MemoryBlock &block)
     auto tree = state.copyState();
     tree.setProperty("version", 4, nullptr);
     tree.setProperty("curve", selectedCurve.load(), nullptr);
+    tree.setProperty("pointMode", pointMode.load(), nullptr);
+    auto points = getPointCurves();
+    tree.setProperty("pointCurves", juce::MemoryBlock(&points, sizeof(points)), nullptr);
     tree.setProperty("channel", selectedChannel.load(), nullptr);
     tree.setProperty("linked", linked.load(), nullptr);
     tree.setProperty("spectrogramSpeed", spectrogramSpeed.load(), nullptr);
@@ -359,6 +372,31 @@ void Processor::setStateInformation(const void *data, int size)
             child.setProperty("value", value, nullptr);
         }
     }
+    spectral::PointCurves points;
+    auto pointData = tree.getProperty("pointCurves");
+    if (auto *bytes = pointData.getBinaryData(); bytes && bytes->getSize() == sizeof(points))
+    {
+        std::memcpy(&points, bytes->getData(), sizeof(points));
+        for (auto &bank : points.banks)
+            for (auto &channel : bank)
+                for (auto &curve : channel)
+                {
+                    if (curve.count < 2 || curve.count > spectral::PointCurve::capacity) { curve.count = 0; continue; }
+                    float previous = -1.f;
+                    for (int i = 0; i < curve.count; ++i)
+                    {
+                        auto &pt = curve.points[i];
+                        if (!std::isfinite(pt.x) || !std::isfinite(pt.value) || !std::isfinite(pt.shape) ||
+                            pt.x < 0 || pt.x > 1 || pt.x <= previous)
+                        { curve.count = 0; break; }
+                        previous = pt.x;
+                        pt.value = std::clamp(pt.value, 0.f, 1.f);
+                        pt.shape = std::clamp(pt.shape, -1.f, 1.f);
+                    }
+                }
+    }
+    setPointCurves(points);
+    pointMode = bool(tree.getProperty("pointMode", false));
     state.replaceState(tree);
     updateBanks(banks);
     selectedBank =

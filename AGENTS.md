@@ -1,8 +1,9 @@
 # FREEQY DELAY
 
 ## Product
-C++20 JUCE audio effect, macOS VST3 and Standalone development targets.
-The host-facing product name, bundle identity and build target are FREEQY DELAY / FreeqyDelay.
+C++20 JUCE audio effect, macOS VST3, native CLAP and Standalone development targets.
+The host-facing product name and build target are FREEQY DELAY / FreeqyDelay; the manufacturer
+name is Station Sound. Keep the existing bundle and four-character identities stable.
 Keep the internal APVTS root `SpectralDelay` unchanged so existing saved parameter state remains readable.
 Independent L/R curves set delay, feedback and level across frequency.
 Input trim precedes the dry/wet split; output trim follows linear mixing.
@@ -11,6 +12,7 @@ Display the selected STFT's full positive-bin count as logical cells across 20 H
 Keep those cell bounds and count sample-rate independent; resample analyzer and saved-curve
 values at physical frequencies so 44.1–192 kHz all maximize the visible bucket count.
 All controls use bright horizontal top markers with volume-driven shading below.
+The selected curve also shows a dim opposite-channel line and shading when the channels differ.
 Rasterize to full pixels, merging shared pixels by maxima; never use faint subpixel caps.
 Keep a dark live input FFT and a vertically scrolling wet-return spectrogram.
 Scroll stepper: 0.5x/1x/2x/4x covers 12/6/3/1.5 s in 180 rows; default 1x.
@@ -38,6 +40,8 @@ Match the user sketch: four full-width bank tabs above the enlarged graph, Banks
 Below the graph: Delay / Level / Feedback, Scroll +/-, Resolution +/-, link icon,
 L/R, Reset, Clear Buffer. No visible copy or undo/redo controls.
 The link toggle displays two disconnected circles when off and overlapping connected circles when on.
+The top-bar Presets menu includes Default: Reset curve values (Delay 25%, Feedback 35%, Level
+100%), one active bank, Max Delay 1 s, Resolution 1024 samples, Wet 50%, and other parameters zero.
 Bottom strip: numeric Morph/Depth/Rate with stereo arrow toggle, large Max Delay,
 Curve Shift depth/rate knobs, Wet, then small stacked IN/OUT trims.
 Morph, Depth and Rate use rotary vertical-drag interaction, but render only the seven-segment
@@ -53,6 +57,12 @@ Rotary controls use the EditorStyle's layered recess, bevel and shaded cap.
 Undo/redo remains available with Command-Z / Shift-Command-Z (one drawing gesture).
 Morph targets use dashed caps; parameter values never interpolate visually between buckets.
 Drawing updates whole bucket cells on the 1025-point saved grid, with undo/link.
+Point mode stores per-bank/channel/parameter points and segment curvature as optional v4 editor
+state, renders them onto the same saved grid, and includes them in undo/link/reset. Point
+coordinates follow the logarithmic visible frequency axis; drag solid segment midpoint handles
+vertically to change curvature, while hollow points move the anchors. Flat segments ignore handle
+drags. Existing drawn curves are sampled
+when first converted to points. Right-click removes interior points.
 Cancel an active drawing gesture if the automated STFT size changes.
 Analyzer measures L/R independently; smooth live input but retain raw wet frames in history.
 The development FFT/sine diagnostic intentionally retains input metering.
@@ -68,10 +78,11 @@ Four-bank anchors: 0, 33⅓, 66⅔, 100 percent; one bank ignores morph.
 Morph smooths over 20 ms; evaluate only the active FFT bins each hop.
 Solid markers show the edit bank; dashed caps preview the target morph.
 No y-axis legend is shown; keep grid lines and the 20 Hz–20 kHz x-axis.
-Stereo Morph (default off) uses independent Depth (0–100%, default 25%) and
-Rate (0–10 Hz, default .3) to offset L/R morph positions oppositely around Morph.
-Wrap both stereo offsets modulo 100; retain the manual 100% endpoint when off; rate zero holds +Depth left and -Depth right.
-Smooth toggling/depth/rate over 20 ms; run modulation with the editor closed.
+Morph modulation uses Depth (0–100%, default 0%) and Rate (0–10 Hz, default .3).
+The stereoMorph direction toggle selects same or opposite L/R offsets; Depth zero turns it off.
+Wrap both offsets modulo 100; retain the manual 100% endpoint at zero depth; zero rate holds
++Depth left and either +Depth or -Depth right according to direction.
+Smooth direction/depth/rate over 20 ms; run modulation with the editor closed.
 Publish live positions through atomics for the GUI; never read GUI state in DSP.
 Undo/redo snapshots curves, all banks and active count.
 Inactive banks retain data when the count is reduced.
@@ -102,9 +113,16 @@ Phase-align complex frames before interpolating fractional read positions.
 Glide delay over 50 ms; gains, feedback and morph smooth over 20 ms.
 Stereo Curve Shift moves all three maps along the frequency axis, never audio bins.
 Amount is 0–1000 Hz; rate is 0–10 Hz (default .3).
-Instantaneous offsets: +Amount*cos(2π Rate t) left, negative right.
+The Amount knob uses a 20 Hz offset logarithmic scale with an exact zero; its host parameter
+normalization remains unchanged.
+Modulation follows a symmetric asinh-shaped logarithmic mapping of the sinusoidal LFO, with a
+continuous center slope and +Amount at its positive peak; right offset is the negative of left.
 Positive offset moves shapes up: read the saved map at bin frequency minus offset.
-Interpolate reference points and banks; hold endpoints outside DC/Nyquist.
+Pin the map at the first and last visible buckets (20 Hz and 20 kHz), interpolating curve
+values to moving joins based on 75 Hz and 19 kHz, including across shifted-out regions. Fade
+the interpolation in near zero shift to preserve the original curve continuously. Frequencies
+outside the visible range retain their original curve values. Interpolate reference points and banks;
+hold lookups outside DC/Nyquist.
 Zero rate holds left-up/right-down; mono uses left. Smooth amount/rate and transitions into or
 out of the zero-rate hold over 20 ms.
 Flat maps keep their sound at every amount/rate; saved shapes are unchanged.
@@ -121,19 +139,21 @@ Never serialize active delay history.
 Stable current IDs: mix, maxDelayMs, inputTrimDb, outputTrimDb, curveMorph,
 shiftHz, shiftRateHz, stftSize, stereoMorph, morphDepth, morphRateHz.
 Defaults: mix .5, maxDelayMs 1000, trims 0 dB, morph 0%, shift 0 Hz,
-shift rate .3 Hz, STFT choice index 6 (1024 samples).
+shift rate .3 Hz, morph depth 0%, STFT choice index 6 (1024 samples).
 Curve defaults: delay .25, feedback .35, level 1, both channels/all banks.
 Bank count and edit selection are saved, not automated; new controls automate.
 Schema version 4 saves four banks of six 1025-value float arrays and editor state.
 Version 1: copy its single curves to all banks, morph/edit selection to zero.
 Version 2: retain banks/morph. For both, default to shift off and STFT 1024.
 Retire copies, spreadMs, depth, rateHz, copyMode; never reuse their IDs.
-Version 3 keeps its shift settings. All older states default Stereo Morph off.
+Version 3 keeps its shift settings. Older states default the direction toggle to same.
 Accept versions 1–4, clamp invalid values, reject unknown versions safely.
 State curve bytes are native little-endian floats on supported macOS targets.
 
 ## Build and layout
 Pinned JUCE 9.0.5, commit d60b7a78030661574a615b586d9325ba7a7fa7dd.
+Native CLAP uses pinned clap-juce-extensions commit
+6bde108329ff9fc24404b79b8b397261a75cf6a8 and is opt-in.
 The authoritative dependency revision is in CMakeLists.txt.
 Requires CMake >=3.22 and Apple command line developer tools.
 Local CMake executable: .deps/venv/bin/cmake.
@@ -143,24 +163,35 @@ Test: ctest --test-dir build --output-on-failure
 Repeat with build-release and -DCMAKE_BUILD_TYPE=Release.
 JUCE_DIR can point to .deps/JUCE; otherwise CMake fetches the pinned dependency.
 Ordinary CMake builds keep artifacts local. Root Makefile uses build-system.
-make defaults to VST3 only; AAX remains disabled even if an SDK is present.
+make defaults to VST3 only; CLAP and AAX remain opt-in.
+Use make clap / install-clap or CLAP=1; CLAP_DIR overrides its install folder.
+The CLAP build target clears quarantine from its local bundle after packaging.
+The CLAP install component copies first, then clears quarantine from that copy.
 Explicit AAX=1 enables it; AAX_SDK_PATH selects an external SDK, otherwise
 a single local SDK is detected or JUCE's bundled SDK is used.
 SPECTRAL_BUILD_AAX enables the CMake format; AAX_SDK_PATH is optional.
-make install explicitly copies enabled formats to system VST3/AAX folders.
-Use make install-vst3 / install-aax for one format; never compile as root.
-VST3_DIR and AAX_DIR override destinations; CMake installation can be staged.
+make install explicitly copies enabled formats to system VST3/CLAP/AAX folders.
+VST3 and CLAP install components then clear `com.apple.quarantine` from the copied
+bundle and fail if that step fails. Use make install-vst3 / install-clap / install-aax;
+never compile as root. VST3_DIR, CLAP_DIR and AAX_DIR override destinations.
 PACE signing/Pro Tools Developer testing are separate from compilation.
 Release VST3/AAX compilation and local staged installation were verified with
 SDK 2.10.0; staged VST3 signature/host loading pass. AAX Pro Tools loading is untested.
 Seal the VST3 bundle after manifest generation; do not alter PACE-signed AAX bundles.
 Source/Engine.*: independently testable DSP; PluginProcessor.*: host/state.
-Source/PluginEditor.*: native controls/drawing; Tests/: DSP/state/VST3 coverage.
+Source/PluginEditor.*: native controls/drawing; Tests/: DSP/state/format coverage.
+README.md's “Codebase map for contributors and agents” is the navigation index;
+update that section when ownership or cross-file workflows change.
+WebCLAP needs a WASM CLAP adapter and browser UI; do not label the native macOS
+bundle as WebCLAP or claim a .wclap artifact until that separate target exists.
 SPECTRAL_DIAGNOSTIC=ON retains input FFT plus 440 Hz/-18 dBFS sine output.
 Diagnostic latency is zero; the sine route is absent from normal controls.
 
 ## Validation and maintenance
 Latest Debug/Release DSP, VST3-host and state suites pass.
+Native CLAP Release compiles, is ad-hoc signed, and its staged copy/install
+quarantine cleanup passes. Its staged smoke test scans, instantiates, processes,
+and round-trips state; commercial CLAP-host acceptance remains pending.
 FREEQY DELAY Release VST3 has a valid ad-hoc signature and its local quarantine attribute was cleared for host validation.
 Spectrogram speed/row spacing, timestamp delivery, bounded overflow, state recall, chronology, ring wrap, stereo switching, resize and clearing tests pass.
 Bucket boundary/hit-test, sample-rate-independent visible bounds, analyzer resampling,

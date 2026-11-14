@@ -1,6 +1,6 @@
 # FREEQY DELAY
 
-A C++20 JUCE spectral delay for macOS, built as VST3 and Standalone.
+A C++20 JUCE spectral delay for macOS, built as VST3, native CLAP, and Standalone.
 Edit independent left/right delay, feedback and level values in a live bucket display.
 The frequency axis is logarithmic from 20 Hz–20 kHz. Select a curve and channel;
 Link mirrors edits, Reset restores the selected curve, and Command-Z / Shift-Command-Z
@@ -51,8 +51,10 @@ and clears its existing tail. Bank shapes and dry audio remain intact.
 ## Stereo curve shift
 
 **Amount Hz** (0–1000 Hz) moves the delay, feedback and level shapes along the
-frequency axis. **Rate Hz** (0–10 Hz) makes the left and right shapes move in
-opposite directions, then exchange directions sinusoidally. Rate 0 holds a
+frequency axis. Its knob uses logarithmic spacing with an exact zero, providing finer control
+at low frequencies while retaining the existing host automation mapping. **Rate Hz** (0–10 Hz) makes the left and right shapes move in
+opposite directions. A symmetric logarithmic response shapes the sinusoidal modulation, with
+a smooth center crossing and the selected Amount reached at each peak. Rate 0 holds a
 fixed left-up/right-down offset; Amount 0 disables movement. Both controls
 are exposed to DAW automation; mono uses the left shift.
 
@@ -61,7 +63,8 @@ For example, Amount 100 Hz and Rate 0 moves a level peak drawn at 1 kHz to
 a 1 kHz input tone remains 1 kHz, with its treatment determined by the moving
 maps. Changing delays can still produce the usual delay modulation effects.
 Lookups interpolate between stored curve points and hold endpoint values
-outside DC/Nyquist. Saved banks stay unchanged; dashed caps preview the shifted,
+outside DC/Nyquist. Curve Shift pins the visible endpoints and interpolates them into the moving curve, including
+where a shift would otherwise leave a flat shelf. The original curve is retained at zero shift. Saved banks stay unchanged; dashed caps preview the shifted,
 morphed targets. Existing `shiftHz` and `shiftRateHz` automation IDs are retained.
 
 ## Clearing tails
@@ -73,28 +76,63 @@ It is a momentary action, not an automatable or saved parameter.
 
 ## Curve banks and morph automation
 
+Use the top-bar **Presets** menu to load **Default**, which sets the curves to their Reset values (Delay 25%, Feedback 35%, Level 100%) and enables one
+bank. Max Delay is 1 s, Resolution is 1024 samples, Wet is 50%, and the other parameters are zero.
+
 Choose one to four banks with **Banks + / −**, then select **Bank 1–4** to edit.
 Inactive banks retain their data. Undo/Redo includes bank-count changes.
 
 The bottom strip groups **Bank Morph**, a large **Max Delay** knob, **Curve Shift**,
-**Wet**, and stacked **IN / OUT** trims. The paired-arrow button toggles Stereo Morph.
+**Wet**, and stacked **IN / OUT** trims. The paired-arrow button selects the Morph modulation direction.
 Numerical values use a seven-segment display with a glowing unit label.
 Max Delay reads in milliseconds below one second and seconds at or above one second.
 Bare typed values use the displayed unit; append `ms` or `s` to override it. Automate **Curve Morph (%)** or move
 **Morph** to blend adjacent banks. Four-bank anchors are 0%, 33⅓%, 66⅔% and
 100%; two-bank anchors are 0% and 100%. One bank ignores morph.
 
-Enable **Stereo Morph** with the arrow button to move left/right bank positions in opposite directions
-around the main Morph position. **Depth %** sets the offset (0–100%, default
-25%), and its own **Rate Hz** controls motion (0–10 Hz, default .3). Positions
-wrap around 0/100%; rate zero holds a fixed positive left/negative right offset.
-Dashed caps preview the live positions. This works independently of curve shifting,
-continues with the editor closed, and supports DAW
-automation. Turning it off smoothly returns both channels to the main Morph.
+The paired-arrow button selects same-direction or opposite-direction movement of the left and
+right bank positions around Morph. **Depth %** sets the offset (0–100%, default 0%);
+set it to zero to turn modulation off. **Rate Hz** controls motion (0–10 Hz, default .3).
+Positions wrap around 0/100%; rate zero holds a positive offset on the left and either a
+positive or negative offset on the right, according to direction. Dashed caps preview live
+positions. Modulation runs with the editor closed and supports DAW automation.
 
 State format is version 4. Versions 1–3 remain readable: old single-bank states
-populate all four banks, old copy controls are retired, and Stereo Morph starts
-off for all older states. Existing version 3 shift amount/rate settings survive with the corrected curve-shift behavior.
+populate all four banks and old copy controls are retired. Existing version 3 shift amount/rate settings survive with the corrected curve-shift behavior.
+
+## Codebase map for contributors and agents
+
+Start with `AGENTS.md` for the non-negotiable DSP, real-time, UI, state, and
+validation invariants. Then use this map instead of reading the repository in
+filename order:
+
+| Area | Authoritative files | Go here when… |
+|---|---|---|
+| Build/formats/install | `CMakeLists.txt`, `Makefile` | adding a format, dependency, test target, signing, or explicit installation step |
+| Spectral DSP | `Source/Engine.h`, `Source/Engine.cpp` | changing STFT, delay history, feedback, morph, curve shift, latency, or buffer clearing |
+| Host and state | `Source/PluginProcessor.h`, `Source/PluginProcessor.cpp` | changing parameters, automation, analyzer transfer, APVTS state, or migrations |
+| Editor behavior | `Source/PluginEditor.h`, `Source/PluginEditor.cpp`, `Source/PointCurves.h` | changing layout, curve drawing, bank tools, keyboard undo, or visualization updates |
+| Look and feel | `Source/EditorStyle.h`, `Source/FreeqyPalette.h` | changing controls, seven-segment values, bevels, bloom, or canonical colors |
+| Frequency mapping | `Source/BucketDisplay.h` | changing visible bucket bounds, hit testing, or analyzer-to-bucket resampling |
+| Visualization data | `Source/SpectrumAnalyzer.h`, `Source/SpectrogramHistory.h` | changing FFT capture, scrolling history, raster rows, or spectrogram colors |
+| DSP regression | `Tests/Main.cpp` | proving audio behavior, latency, reconstruction, modulation, and real-time allocation rules |
+| State/UI regression | `Tests/StateTests.cpp` | proving migrations, editor actions, display mapping, screenshots, and analyzer queues |
+| Format smoke tests | `Tests/HostCheck.cpp`, `Tests/ClapCheck.cpp` | checking VST3 or native CLAP discovery, processing, state, ports, and metadata |
+
+Useful shortcuts:
+
+- A parameter change normally touches `createParameterLayout`/`readSettings` in
+  `PluginProcessor.cpp`, its editor attachment, host checks, and state tests.
+  Never recycle a retired parameter ID.
+- Curve or bank changes cross `CurveBanks` in `Engine.h`, processor
+  serialization/messaging, editor drawing, and both DSP/state regressions.
+- Spectrogram changes flow from the engine/processor analyzer queues through
+  `SpectrogramHistory` to editor rasterization; audio-thread code must only use
+  bounded preallocated transfer.
+- Run `rg -n "parameterId|symbol" Source Tests CMakeLists.txt` before editing a
+  cross-cutting feature. Run the focused test first, then the full CTest suite.
+- For layout work, use the screenshot cases in `StateTests`; for DSP work, keep
+  the engine testable without constructing the editor.
 
 ## Build
 
@@ -120,10 +158,41 @@ Use build-release and -DCMAKE_BUILD_TYPE=Release for optimized builds. Output:
 `build-release/FreeqyDelay_artefacts/Release/Standalone/FREEQY DELAY.app`.
 Nothing is automatically installed into system plugin folders.
 
+## Native CLAP
+
+Native CLAP is opt-in and uses the pinned
+`clap-juce-extensions` revision recorded in `CMakeLists.txt`. A local checkout
+may be supplied with `CLAP_JUCE_EXTENSIONS_DIR`; otherwise CMake fetches that
+exact revision and its submodules.
+
+```sh
+make clap                         # Build and locally unquarantine the CLAP bundle
+make install-clap                 # Copy to the CLAP folder, then clear quarantine
+
+# Equivalent CMake configuration
+.deps/venv/bin/cmake -S . -B build-clap \
+  -DJUCE_DIR="$PWD/.deps/JUCE" \
+  -DSPECTRAL_BUILD_CLAP=ON \
+  -DCLAP_JUCE_EXTENSIONS_DIR="$PWD/.deps/clap-juce-extensions" \
+  -DCMAKE_BUILD_TYPE=Release
+.deps/venv/bin/cmake --build build-clap --target FreeqyDelay_CLAP_LocalReady -j 4
+```
+
+The output is
+`build-clap/FreeqyDelay_artefacts/Release/CLAP/FREEQY DELAY.clap`.
+The CLAP ID is `com.stationsound.freeqydelay`; parameter IDs and the versioned
+JUCE state payload are shared with VST3.
+
+WebCLAP is not the macOS CLAP bundle renamed as `.wclap`: it requires a WASM
+CLAP module and a browser-compatible editor. The current JUCE/Cocoa processor
+target cannot be compiled for WASI as-is, so a WebCLAP adapter and portable DSP
+boundary remain a separate implementation task. No WebCLAP artifact is claimed
+by the current build.
+
 ## Makefile, system installation, and AAX
 
 The root Makefile builds into its own `build-system` tree, leaving other build
-trees independent. Release VST3 is the default; AAX compilation is disabled.
+trees independent. Release VST3 is the default; native CLAP and AAX are opt-in.
 AAX requires explicit `AAX=1`, even when an SDK is present. With AAX enabled,
 a single `aax-sdk*/Interfaces/AAX.h` folder supplies the SDK path automatically.
 Explicit `AAX_SDK_PATH` overrides discovery.
@@ -131,27 +200,34 @@ Explicit `AAX_SDK_PATH` overrides discovery.
 ```sh
 make                          # Build VST3 only
 make install                  # Build, then install VST3 system-wide
-make install-vst3 AAX=0        # Build/install only VST3
+make install-vst3             # Build/install only VST3
+make install CLAP=1           # Build/install VST3 and native CLAP
 make aax AAX=1                 # Build AAX with JUCE's bundled SDK if none is detected
 make install AAX=1 AAX_SDK_PATH="/absolute/path/to/AAX_SDK"
 ```
 
-VST3 installs to `/Library/Audio/Plug-Ins/VST3`; AAX installs to
+VST3 installs to `/Library/Audio/Plug-Ins/VST3`, CLAP to
+`/Library/Audio/Plug-Ins/CLAP`, and AAX to
 `/Library/Application Support/Avid/Audio/Plug-Ins`. Close hosts before replacing
-loaded bundles. Installation requires write access to those folders. If denied,
+loaded bundles. After copying VST3 or CLAP, its install component removes
+`com.apple.quarantine` so local hosts can load it. Installation requires
+write access to those folders. If denied,
 run the install steps with administrator privileges **after** the ordinary build:
 
 ```sh
 sudo .deps/venv/bin/cmake --install build-system --config Release --component VST3
+sudo .deps/venv/bin/cmake --install build-system --config Release --component CLAP
 sudo .deps/venv/bin/cmake --install build-system --config Release --component AAX
 ```
 
-The AAX component exists only when AAX was enabled during configuration. Do not
-run the build itself with sudo. Override `BUILD_DIR`, `CONFIG`, `JOBS`, `VST3_DIR`
-and `AAX_DIR` on the make command line as needed. Example local staging:
+CLAP and AAX components exist only when their formats were enabled during
+configuration. The direct VST3 and CLAP install commands also perform post-copy
+quarantine removal. Do not run the build itself with sudo. Override `BUILD_DIR`,
+`CONFIG`, `JOBS`, `VST3_DIR`, `CLAP_DIR`, and `AAX_DIR` as needed. Example local staging:
 
 ```sh
-make install VST3_DIR="$PWD/build-stage/VST3" AAX_DIR="$PWD/build-stage/AAX"
+make install CLAP=1 VST3_DIR="$PWD/build-stage/VST3" \
+  CLAP_DIR="$PWD/build-stage/CLAP" AAX_DIR="$PWD/build-stage/AAX"
 ```
 
 CMake-only users can enable `-DSPECTRAL_BUILD_AAX=ON` and optionally supply
@@ -187,7 +263,9 @@ delay, feedback, curve remapping, bank morph, stereo curve shifting,
 size transitions, clearing, dry continuity and ordinary C++ audio-thread heap
 allocation. HostCheck scans/loads the VST3, checks exposed automation/latency,
 processes audio, recalls state and creates the editor. StateTests covers bank and
-new-control recall, old-state migration and malformed data. These are automated
-JUCE-host checks, not commercial-DAW certification or listening acceptance.
+new-control recall, old-state migration and malformed data. ClapCheck stages and
+loads the native CLAP, verifies Station Sound metadata/stereo ports, processes
+audio, and round-trips state. These are automated format checks, not commercial-DAW
+certification or listening acceptance.
 Local bundles are ad-hoc signed; distribution notarization is deferred.
 See AGENTS.md for DSP invariants and maintenance instructions.
