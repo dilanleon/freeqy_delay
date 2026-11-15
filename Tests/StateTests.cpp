@@ -17,12 +17,17 @@ int main(int argc, char **argv)
         {
             Processor presetProcessor;
             auto editor = std::unique_ptr<juce::AudioProcessorEditor>(presetProcessor.createEditorAndMakeActive());
-            juce::ComboBox *menu = nullptr;
+            auto *presetEditor = dynamic_cast<Editor *>(editor.get());
+            juce::TextButton *menu = nullptr;
             juce::Slider *shiftDepth = nullptr;
+            juce::Slider *morphDepthControl = nullptr;
+            juce::Slider *maxDelayControl = nullptr;
             for (auto *child : editor->getChildren())
             {
-                if (child->getName() == "Preset menu") menu = dynamic_cast<juce::ComboBox *>(child);
+                if (child->getName() == "Preset menu") menu = dynamic_cast<juce::TextButton *>(child);
                 if (child->getName() == "shiftHz") shiftDepth = dynamic_cast<juce::Slider *>(child);
+                if (child->getName() == "morphDepth") morphDepthControl = dynamic_cast<juce::Slider *>(child);
+                if (child->getName() == "maxDelayMs") maxDelayControl = dynamic_cast<juce::Slider *>(child);
             }
             check(shiftDepth && shiftDepth->proportionOfLengthToValue(0) == 0 &&
                       std::abs(shiftDepth->proportionOfLengthToValue(1) - 1000) < .001 &&
@@ -31,12 +36,21 @@ int main(int argc, char **argv)
                   "logarithmic curve shift knob");
             check(std::abs(presetProcessor.state.getParameter("shiftHz")->convertFrom0to1(.5f) - 250.f) < .01f,
                   "curve shift host automation mapping changed");
-            check(menu && menu->getNumItems() == 1 && menu->getItemText(0) == "Default",
-                  "default preset menu");
+            check(presetEditor && menu && menu->getButtonText() == "Presets",
+                  "categorized preset menu button");
+            check(morphDepthControl && maxDelayControl &&
+                      morphDepthControl->getBottom() == editor->getHeight() - 34 &&
+                      maxDelayControl->getBottom() == editor->getHeight() - 24,
+                  "bottom controls should fill a shared compact strip with margins");
+            editor->setSize(960, 700);
+            check(morphDepthControl->getBottom() == editor->getHeight() - 34 &&
+                      maxDelayControl->getBottom() == editor->getHeight() - 24,
+                  "minimum-size bottom controls should retain their shared strip alignment");
+            editor->setSize(1120, 800);
             auto *mix = presetProcessor.state.getParameter("mix");
             mix->setValueNotifyingHost(1.f);
             presetProcessor.selectedBank = 3;
-            menu->setSelectedId(1, juce::sendNotificationSync);
+            presetEditor->loadDefaultPreset();
             for (const char *id : {"shiftHz", "shiftRateHz", "inputTrimDb", "outputTrimDb",
                                    "curveMorph", "stereoMorph", "morphDepth", "morphRateHz"})
                 check(std::abs(presetProcessor.state.getRawParameterValue(id)->load()) < .0001f,
@@ -55,10 +69,49 @@ int main(int argc, char **argv)
                             check(value == (type == 0 ? .25f : type == 1 ? .35f : 1.f),
                                   "default preset curve value");
             mix->setValueNotifyingHost(1.f);
-            menu->setSelectedId(1, juce::sendNotificationSync);
+            presetEditor->loadDefaultPreset();
             check(std::abs(presetProcessor.state.getRawParameterValue("mix")->load() - .5f) < .0001f,
                   "default preset cannot be reloaded");
             presetProcessor.editorBeingDeleted(editor.get());
+        }
+        {
+            Processor bankPresetProcessor;
+            auto editor = std::unique_ptr<juce::AudioProcessorEditor>(bankPresetProcessor.createEditorAndMakeActive());
+            auto *presetEditor = dynamic_cast<Editor *>(editor.get());
+            check(presetEditor != nullptr, "bank preset editor");
+            auto banks = bankPresetProcessor.getBanks();
+            for (int b = 0; b < 4; ++b)
+                for (auto &channel : banks.banks[size_t(b)].values)
+                    for (int type = 0; type < 3; ++type)
+                        channel[size_t(type)].fill(.1f * float(b + 1));
+            bankPresetProcessor.updateBanks(banks);
+            auto points = bankPresetProcessor.getPointCurves();
+            for (int b = 0; b < 4; ++b)
+                points.banks[size_t(b)][0][0].count = b + 1;
+            bankPresetProcessor.setPointCurves(points);
+            bankPresetProcessor.selectedBank = 2;
+            bankPresetProcessor.state.getParameter("mix")->setValueNotifyingHost(.8f);
+            auto *maxDelay = bankPresetProcessor.state.getParameter("maxDelayMs");
+            maxDelay->setValueNotifyingHost(maxDelay->convertTo0to1(4000.f));
+            presetEditor->loadSelectedBankDefaultPreset();
+            const auto updatedBanks = bankPresetProcessor.getBanks();
+            check(updatedBanks.count == 4 && bankPresetProcessor.selectedBank == 2,
+                  "selected-bank preset changed bank count or selection");
+            check(std::abs(bankPresetProcessor.state.getRawParameterValue("mix")->load() - .8f) < .001f &&
+                      std::abs(bankPresetProcessor.state.getRawParameterValue("maxDelayMs")->load() - 4000.f) < 1.f,
+                  "selected-bank preset changed global parameters");
+            for (int b = 0; b < 4; ++b)
+                for (const auto &channel : updatedBanks.banks[size_t(b)].values)
+                    for (int type = 0; type < 3; ++type)
+                        for (float value : channel[size_t(type)])
+                            check(value == (b == 2 ? (type == 0 ? .25f : type == 1 ? .35f : 1.f)
+                                                   : .1f * float(b + 1)),
+                                  "selected-bank preset changed the wrong curves");
+            const auto updatedPoints = bankPresetProcessor.getPointCurves();
+            for (int b = 0; b < 4; ++b)
+                check(updatedPoints.banks[size_t(b)][0][0].count == (b == 2 ? 0 : b + 1),
+                      "selected-bank preset changed the wrong point data");
+            bankPresetProcessor.editorBeingDeleted(editor.get());
         }
         spectral::PointCurve pointCurve;
         pointCurve.count = 2;

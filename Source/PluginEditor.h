@@ -20,6 +20,8 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     void mouseMove(const juce::MouseEvent &) override;
     void refreshDisplay(double nowSeconds);
     bool keyPressed(const juce::KeyPress &) override;
+    void loadDefaultPreset();
+    void loadSelectedBankDefaultPreset();
 
   private:
     EditorStyle style;
@@ -28,7 +30,8 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     std::array<juce::Slider, 6> knobs;
     std::array<juce::Label, 6> labels;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
-    juce::ComboBox stftSize, scrollSpeed, presetMenu;
+    juce::ComboBox stftSize, scrollSpeed;
+    juce::TextButton presetMenu{"Presets"};
     ChoiceStepper resolutionControl, scrollControl;
     juce::TextButton drawMode{"Draw"}, pointsMode{"Points"};
     int selectedPoint = -1, selectedSegment = -1;
@@ -76,5 +79,4 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     void changeBankCount(int delta);
     void stepHistory(bool backwards);
     void resetDisplayHistory();
-    void loadDefaultPreset();
 };

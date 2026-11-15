@@ -7,14 +7,25 @@ Editor::Editor(Processor &processor)
     setLookAndFeel(&style);
     addAndMakeVisible(presetMenu);
     presetMenu.setName("Preset menu");
-    presetMenu.setTextWhenNothingSelected("Presets");
-    presetMenu.setTooltip("Load a preset.");
-    presetMenu.addItem("Default", 1);
-    presetMenu.onChange = [this]
+    presetMenu.setTooltip("Load a plug-in or selected-bank preset.");
+    presetMenu.onClick = [this]
     {
-        if (presetMenu.getSelectedId() == 1)
-            loadDefaultPreset();
-        presetMenu.setSelectedId(0, juce::dontSendNotification);
+        juce::PopupMenu pluginPresets, bankPresets, presets;
+        pluginPresets.addItem(1, "Default");
+        bankPresets.addItem(2, "Default");
+        presets.addSubMenu("Plug-in", pluginPresets);
+        presets.addSubMenu("Selected Bank", bankPresets);
+        juce::Component::SafePointer<Editor> safeThis(this);
+        presets.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&presetMenu),
+                              [safeThis](int result)
+        {
+            if (safeThis == nullptr)
+                return;
+            if (result == 1)
+                safeThis->loadDefaultPreset();
+            else if (result == 2)
+                safeThis->loadSelectedBankDefaultPreset();
+        });
     };
     for (auto *button : {&drawMode, &pointsMode})
     {
@@ -268,6 +279,29 @@ void Editor::loadDefaultPreset()
     p.updateBanks(banks);
     timerCallback();
 }
+void Editor::loadSelectedBankDefaultPreset()
+{
+    finishGesture();
+    selectedPoint = selectedSegment = -1;
+    const int bankIndex = juce::jlimit(0, 3, p.selectedBank.load());
+    auto banks = p.getBanks();
+    auto &bank = banks.banks[size_t(bankIndex)];
+    for (auto &channel : bank.values)
+    {
+        channel[0].fill(.25f);
+        channel[1].fill(.35f);
+        channel[2].fill(1.f);
+    }
+    auto points = p.getPointCurves();
+    points.banks[size_t(bankIndex)] = {};
+    undoStack.push_back(snapshot());
+    if (undoStack.size() > 100)
+        undoStack.erase(undoStack.begin());
+    redoStack.clear();
+    p.updateBanks(banks);
+    p.setPointCurves(points);
+    timerCallback();
+}
 void Editor::resetDisplayHistory()
 {
     p.restartSpectra();
@@ -409,7 +443,8 @@ void Editor::resized()
         bankButtons[i].setBounds(i == 3 ? tabs : tabs.removeFromLeft(tabWidth));
     bankMore.setBounds(bankTools.getRight() - 31, bankTools.getY(), 31, 21);
     bankLess.setBounds(bankTools.getRight() - 31, bankTools.getY() + 21, 31, 21);
-    auto bottom = area.removeFromBottom(186);
+    constexpr int bottomStripHeight = 140;
+    auto bottom = area.removeFromBottom(bottomStripHeight);
     toolbar = area.removeFromBottom(49);
     // Axis and pointer readout belong to the display, above the editing toolbar.
     plot = area.withTrimmedBottom(40).reduced(1, 0);
@@ -461,7 +496,7 @@ void Editor::resized()
     rotary(3, shift, 20);
     rotary(0, mixPanel.withTrimmedTop(42), 20);
     auto gains = gainPanel;
-    rotary(4, gains.removeFromTop(93), 17);
+    rotary(4, gains.removeFromTop(gains.getHeight() / 2), 17);
     rotary(5, gains, 17);
     for (int i : {4, 5})
         knobs[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 19);

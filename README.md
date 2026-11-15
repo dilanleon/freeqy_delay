@@ -37,7 +37,7 @@ target. A dim line shows the other channel when its selected curve differs.
 
 | Area | Controls | What they do |
 | --- | --- | --- |
-| Top bar | Presets; Draw / Points | Load the Default preset or choose how to edit a curve. |
+| Top bar | Presets; Draw / Points | Load a plug-in or selected-bank preset, or choose how to edit a curve. |
 | Above graph | Bank 1–4; Banks − / + | Select an edit bank or change the active count. Disabled banks retain their shapes. |
 | Below graph | Delay / Level / Feedback; Scroll − / +; Resolution − / +; Link; L/R; Reset; Clear Buffer | Select a curve and channel, adjust the display and STFT, link edits, reset the selected curve, or clear the delay tail. |
 | Bottom strip | Morph / Depth / Rate and direction; Max Delay; Curve Shift Depth / Rate; Wet; IN / OUT | Set bank morph, delay scale, stereo curve movement, mix, and trims. |
@@ -51,10 +51,13 @@ display axis; adaptive sampling prioritizes narrow peaks within the 64-point lim
 selected channel's curves. Command-Z undoes one drawing gesture, reset, or bank-count
 change; Shift-Command-Z redoes it. There are no visible undo/redo buttons.
 
-**Presets → Default** sets all curves in all banks to Delay 25%, Feedback 35%, and Level
-100%, enables one bank, and selects Bank 1. It sets Max Delay to 1 s, Resolution to 1024
-samples, Wet to 50%, and all other parameters to zero. The initial state without loading
-this preset has four active banks and 0.3 Hz defaults for the two modulation rates.
+**Presets** separates **Plug-in** presets from **Selected Bank** presets. The Default plug-in
+preset sets all curves in all banks to Delay 25%, Feedback 35%, and Level 100%, enables one
+bank, and selects Bank 1. It sets Max Delay to 1 s, Resolution to 1024 samples, Wet to 50%,
+and all other parameters to zero. The Default selected-bank preset sets those same curve
+values only in the selected bank; it leaves global settings, bank count, selection, and other
+banks unchanged. The initial state without loading a preset has four active banks and 0.3 Hz
+defaults for the two modulation rates.
 
 Max Delay displays milliseconds below 1000 ms and seconds from 1 s upward. A bare typed
 number uses the displayed unit; an explicit `ms` or `s` suffix overrides it. The Morph,
