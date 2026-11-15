@@ -118,9 +118,8 @@ captured before the clear request.
 
 The current state schema is version 4. It saves four stereo curve banks, the active bank
 count, edit selection, point-mode data, and display speed. Delay history and visual
-history are not serialized. Versions 1–3 remain readable: version 1 single curves are
-copied to all banks and morph resets to zero; versions 2 and 3 retain their banks. Older
-states default new controls, and retired copy/chorus parameters are not reused. The
+history are not serialized. Only version 4 is accepted; earlier versions are ignored
+without changing the loaded state. Retired copy/chorus parameter IDs are not reused. The
 internal APVTS root remains `SpectralDelay` for saved-state compatibility.
 
 ## Formats and installation
@@ -176,13 +175,13 @@ real-time constraints. Use this map to find the implementation and relevant chec
 | --- | --- | --- |
 | Build, formats, install | `CMakeLists.txt`, `Makefile` | `Tests/HostCheck.cpp`, `Tests/ClapCheck.cpp` |
 | STFT, delay history, feedback, morph, curve shift, latency | `Source/Engine.h`, `Source/Engine.cpp` | `Tests/Main.cpp` |
-| Host parameters, state versions, analyzer queues | `Source/PluginProcessor.h`, `Source/PluginProcessor.cpp` | `Tests/StateTests.cpp`, format checks |
+| Host parameters, state loading, analyzer queues | `Source/PluginProcessor.h`, `Source/PluginProcessor.cpp` | `Tests/StateTests.cpp`, format checks |
 | Editor layout, drawing, points, undo, keyboard commands | `Source/PluginEditor.h`, `Source/PluginEditor.cpp`, `Source/PointCurves.h` | `Tests/StateTests.cpp` |
 | Native controls and palette | `Source/EditorStyle.h`, `Source/FreeqyPalette.h` | editor rendering cases in `Tests/StateTests.cpp` |
 | Display cells, analyzer, scrolling history | `Source/BucketDisplay.h`, `Source/SpectrumAnalyzer.h`, `Source/SpectrogramHistory.h` | `Tests/StateTests.cpp` |
 
 A parameter change usually spans `Processor::layout`, `Processor::readSettings`, editor
-attachments, state migration, and host/state checks. Curve changes span `CurveBanks`,
+attachments, state loading, and host/state checks. Curve changes span `CurveBanks`,
 processor snapshot transfer, editor drawing, and DSP/state checks. Spectrogram changes
 span the analyzers, bounded processor queue, GUI history, and rasterization. Keep
 allocation and locks off the audio path. Search a parameter ID or symbol across `Source`
@@ -194,7 +193,7 @@ and `Tests` before changing a cross-file behavior.
 tree adds `clap_host`. The DSP suite covers all eight STFT sizes, 44.1–192 kHz,
 reconstruction, mono/stereo, bank morph, curve shifting, feedback, clearing, size
 transitions, and ordinary C++ audio-thread heap allocation. State/UI checks cover
-migrations, display mapping, analyzer queues, editor controls, and rendering. These
+version rejection, display mapping, analyzer queues, editor controls, and rendering. These
 automated checks do not establish commercial DAW listening acceptance. AAX Pro Tools
 loading remains untested.
 

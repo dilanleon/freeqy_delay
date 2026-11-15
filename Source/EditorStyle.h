@@ -103,7 +103,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
             return;
         }
         auto box =
-            juce::Rectangle<float>(float(x), float(y), float(width), float(height)).reduced(7);
+            juce::Rectangle<float>(float(x), float(y), float(width), float(height)).reduced(3);
         const float radius = std::min(box.getWidth(), box.getHeight()) * .5f;
         auto center = box.getCentre();
         const float angle = start + position * (end - start);
@@ -221,7 +221,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
         if (digits.isEmpty())
             digits = "0";
         const bool hasUnit = unit.isNotEmpty();
-        const int bulbWidth = hasUnit ? juce::jlimit(24, 42, 14 + unit.length() * 9) : 0;
+        const int bulbWidth = hasUnit ? 52 : 0;
         auto display = bounds.reduced(5, 4).withTrimmedRight(hasUnit ? bulbWidth + 4 : 0);
         const float glyphWidth = std::min(float(display.getWidth()) / std::max(1, digits.length()),
                                           float(display.getHeight()) * .58f);
@@ -236,8 +236,12 @@ class EditorStyle final : public juce::LookAndFeel_V4
         if (hasUnit)
         {
             auto bulb =
-                bounds.withTrimmedLeft(bounds.getRight() - bulbWidth).reduced(2, 5).toFloat();
-            g.setFont(juce::FontOptions(std::min(20.f, bulb.getHeight())).withStyle("Bold"));
+                bounds.withTrimmedLeft(bounds.getRight() - bulbWidth).reduced(2, 2).toFloat();
+            g.setFont(juce::FontOptions(25.f).withStyle("Bold"));
+            const int unitX = int(bulb.getX()) + 7;
+            const int baseline = int(bulb.getCentreY()) + 7;
+            juce::GlyphArrangement glyphs;
+            glyphs.addLineOfText(g.getCurrentFont(), unit, float(unitX), float(baseline));
             g.setColour(freeqy::pink.withAlpha(.16f));
             for (const auto offset : {juce::Point<int>{-3, 0},
                                       {3, 0},
@@ -247,10 +251,13 @@ class EditorStyle final : public juce::LookAndFeel_V4
                                       {1, -1},
                                       {-1, 1},
                                       {1, 1}})
-                g.drawText(unit, bulb.toNearestInt().translated(offset.x, offset.y),
-                           juce::Justification::centred);
+            {
+                auto glow = glyphs;
+                glow.moveRangeOfGlyphs(0, -1, float(offset.x), float(offset.y));
+                glow.draw(g);
+            }
             g.setColour(freeqy::pink);
-            g.drawText(unit, bulb.toNearestInt(), juce::Justification::centred);
+            glyphs.draw(g);
         }
     }
     static juce::String sliderText(const juce::Slider &slider, const juce::String &fallback)

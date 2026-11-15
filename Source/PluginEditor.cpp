@@ -46,7 +46,7 @@ Editor::Editor(Processor &processor)
         addAndMakeVisible(knobs[i]);
         knobs[i].setName(ids[i]);
         knobs[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        knobs[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 90, 22);
+        knobs[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 96, 33);
         addAndMakeVisible(labels[i]);
         labels[i].setText(names[i], juce::dontSendNotification);
         labels[i].setJustificationType(juce::Justification::centred);
@@ -443,7 +443,7 @@ void Editor::resized()
         bankButtons[i].setBounds(i == 3 ? tabs : tabs.removeFromLeft(tabWidth));
     bankMore.setBounds(bankTools.getRight() - 31, bankTools.getY(), 31, 21);
     bankLess.setBounds(bankTools.getRight() - 31, bankTools.getY() + 21, 31, 21);
-    constexpr int bottomStripHeight = 140;
+    constexpr int bottomStripHeight = 170;
     auto bottom = area.removeFromBottom(bottomStripHeight);
     toolbar = area.removeFromBottom(49);
     // Axis and pointer readout belong to the display, above the editing toolbar.
@@ -470,36 +470,39 @@ void Editor::resized()
     shiftPanel = bottom.removeFromLeft(int(width * .23f));
     mixPanel = bottom.removeFromLeft(int(width * .12f));
     gainPanel = bottom;
-    auto morphArea = morphPanel.reduced(12, 18);
-    morphArea.removeFromTop(19);
-    stereoMorph.setBounds(morphArea.removeFromLeft(34).withHeight(58).translated(0, 26));
-    morphArea.removeFromLeft(8);
-    const int numberWidth = (morphArea.getWidth() - 12) / 3;
+    auto morphArea = morphPanel.reduced(8, 0);
+    morphArea.removeFromLeft(38);
+    stereoMorph.setBounds(morphPanel.getX() + 7, bottom.getY() + 55, 30, 58);
+    const int numberWidth = morphArea.getWidth() / 3;
     for (auto pair : {std::pair{&morph, &morphLabel}, std::pair{&morphDepth, &morphDepthLabel},
                       std::pair{&morphRate, &morphRateLabel}})
     {
         auto cell = morphArea.removeFromLeft(numberWidth);
-        pair.second->setBounds(cell.removeFromTop(23));
-        pair.first->setBounds(cell.removeFromTop(62));
-        morphArea.removeFromLeft(6);
+        pair.second->setBounds(cell.withY(bottom.getY() + 29).withHeight(18));
+        pair.first->setBounds(cell.withY(bottom.getY() + 52).withHeight(64));
     }
-    auto rotary = [this](int index, juce::Rectangle<int> cell, int heading)
+    auto rotary = [this, bottom](int index, juce::Rectangle<int> cell)
     {
-        cell = cell.reduced(6, 8);
-        labels[index].setBounds(cell.removeFromTop(heading));
-        knobs[index].setBounds(cell);
+        cell = cell.reduced(3, 0);
+        labels[index].setBounds(cell.withY(bottom.getY() + 29).withHeight(18));
+        const bool large = index == 1;
+        knobs[index].setBounds(cell.withY(bottom.getY() + (large ? 46 : 52))
+                                    .withHeight(large ? 110 : 98));
     };
-    rotary(1, delayPanel.withTrimmedTop(14), 23);
-    auto shift = shiftPanel.withTrimmedTop(42);
+    rotary(1, delayPanel);
+    auto shift = shiftPanel;
     const int half = shift.getWidth() / 2;
-    rotary(2, shift.removeFromLeft(half), 20);
-    rotary(3, shift, 20);
-    rotary(0, mixPanel.withTrimmedTop(42), 20);
-    auto gains = gainPanel;
-    rotary(4, gains.removeFromTop(gains.getHeight() / 2), 17);
-    rotary(5, gains, 17);
+    rotary(2, shift.removeFromLeft(half));
+    rotary(3, shift);
+    rotary(0, mixPanel);
     for (int i : {4, 5})
-        knobs[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 19);
+    {
+        const int rowY = bottom.getY() + (i == 4 ? 2 : 81);
+        knobs[i].setBounds(gainPanel.getX() + 2, rowY, gainPanel.getWidth() - 20, 77);
+        knobs[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false,
+                                 gainPanel.getWidth() - 20, 29);
+        labels[i].setBounds(gainPanel.getRight() - 37, rowY + 13, 34, 22);
+    }
     if constexpr (SPECTRAL_DIAGNOSTIC)
         plot = getLocalBounds().reduced(24).withTrimmedTop(55).withTrimmedBottom(45);
 }
@@ -532,9 +535,9 @@ void Editor::paint(juce::Graphics &g)
         g.setFont(12.f);
         g.setColour(freeqy::sky);
         g.drawText("BANKS", bankTools.withTrimmedRight(31), juce::Justification::centred);
-        g.drawText("BANK MORPH", morphPanel.reduced(12, 12).removeFromTop(19),
-                   juce::Justification::centredLeft);
-        g.drawText("CURVE SHIFT", shiftPanel.reduced(12, 12).removeFromTop(19),
+        g.drawText("BANK MORPH", morphPanel.reduced(12, 8).removeFromTop(19),
+                   juce::Justification::centred);
+        g.drawText("CURVE SHIFT", shiftPanel.reduced(12, 8).removeFromTop(19),
                    juce::Justification::centred);
     }
     g.setColour(freeqy::well);

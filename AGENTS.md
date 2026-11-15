@@ -1,3 +1,63 @@
+# Development Workflow
+
+###
+## CRITICAL: Use Task Subagents
+**USE TASK SUBAGENTS AGGRESSIVELY** to avoid blowing the token budget. This is not optional.
+### When to use subagents
+- **Verbose output** - Commands producing >50 lines of output (builds, tests, downloads, installs)
+- **Multi-step investigations** - Debugging workflows, exploratory research, root cause analysis
+- **Infrastructure operations** - VM management, container operations, service restarts
+- **Searches with uncertain scope** - Finding files/code when the location isn't known upfront
+- **Long-running processes** - Anything that might take significant time or produce streaming output
+### Keep in the main thread
+- **Planning and coordination** - High-level decisions that need user input
+- **Code edits** - File creation and modification
+- **Brief status checks** - Quick commands with predictable, short output
+- **User communication** - Questions, summaries, handoffs
+### Examples
+**Use subagent:**
+- "Run the full test suite and report failures" → subagent runs tests, returns summary
+- "Find where authentication is handled" → subagent searches, returns relevant files
+- "Debug why the build is failing" → subagent investigates, returns findings
+**Keep in main thread:**
+- Reading a specific file you know the path to
+- Editing a function
+- Running `git status`
+- Asking a clarifying question
+**IMPORTANT: Scope subagents to task complexity:**
+- Do not waste usage on large models for simple tasks. Example: For a verbose output summary, GPT-5.6 Luna on medium effort is fine.
+- Scope the complexity of each task assigned to a sub-agent and use varying effort and model size.
+- Do not spawn subagents with higher effort or model size than the lead.
+## CRITICAL: Search Before Changing
+**ALWAYS search for WHY something might be happening before making changes.** Data without context is useless.
+When debugging:
+1. **Search first** - look for documentation, issues, or prior art explaining the behavior
+2. **Understand the mechanism** - don't poke at the system hoping something works
+3. **Only then** make targeted changes based on actual understanding
+
+### Two Modes of Work
+**Exploration mode** - Gaining awareness of a problem space
+- Goal: Understand enough to define validation criteria
+- Activities: Research, reading, asking questions, small experiments
+- Output: Clear validation criteria for the next phase
+- Ask: "Is TDD appropriate here?" before shifting to implementation
+**Implementation mode** - Executing against known criteria
+- Goal: Achieve a validated outcome
+- Prerequisite: Validation criteria are defined and a feedback loop exists
+- If fast feedback isn't possible, solve that problem first or flag it
+### Transitioning Between Modes
+- **Exploration → Implementation**: Shift when you can clearly articulate what success looks like and how to verify it
+- **Implementation → Exploration**: Shift back if validation reveals the problem is different than understood, or if repeated failures indicate missing context
+- **When uncertain**: Ask the user which mode is appropriate
+
+#### Principles
+- **Minimal scope per step** - Keep each cycle small to avoid confusion
+- **Substantive checks only** - Tests must verify actual requirements or their dependencies, not just pass for convenience
+- **Refactor carefully** - Simplify code between cycles, but never change tested behavior during a refactor
+- **Diligence over speed** - Thoroughness matters more than velocity
+#### Anti-patterns
+- **Mocking internal dependencies** - Never mock your own code; this indicates a testability problem that should be fixed. Mocking is only acceptable for external dependencies (e.g., time, network, filesystem).
+
 # FREEQY DELAY
 Project contract for contributors and agents. `README.md` is the user/build guide and its
 “Development map” is the navigation index. Keep this file current when DSP assumptions,
@@ -164,11 +224,9 @@ shift rate .3 Hz, morph depth 0%, STFT choice index 6 (1024 samples).
 Curve defaults: delay .25, feedback .35, level 1, both channels/all banks.
 Bank count and edit selection are saved, not automated; new controls automate.
 Schema version 4 saves four banks of six 1025-value float arrays and editor state.
-Version 1: copy its single curves to all banks, morph/edit selection to zero.
-Version 2: retain banks/morph. For both, default to shift off and STFT 1024.
+Only version 4 is accepted. Earlier and unknown versions are rejected without changing the current state.
 Retire copies, spreadMs, depth, rateHz, copyMode; never reuse their IDs.
-Version 3 keeps its shift settings. Older states default the direction toggle to same.
-Accept versions 1–4, clamp invalid values, reject unknown versions safely.
+Clamp invalid values in version 4 states.
 State curve bytes are native little-endian floats on supported macOS targets.
 The old multi-copy/chorus engine has been removed.
 
@@ -225,9 +283,9 @@ Adaptive point conversion, STFT-change gesture cancellation, stalled-queue filte
 pre-clear frame rejection tests pass.
 Bucket boundary/hit-test, sample-rate-independent visible bounds, analyzer resampling,
 dual-source level/mute/tail metering and stereo anti-phase checks pass.
-Stereo morph modulation, disabled/single-bank cases, v4 recall and v3 migration pass.
+Stereo morph modulation, disabled/single-bank cases and v4 recall pass.
 All eight sizes, smoothed zero-rate holds, curve-axis shift direction and pitch preservation,
-display-aware Max Delay parsing, queue resets, v1/v2 migration and diagnostic sine pass.
+display-aware Max Delay parsing, queue resets, legacy version rejection and diagnostic sine pass.
 Default/minimum editor renders at coarse/fine FFT sizes were visually inspected. Commercial DAW listening
 acceptance remains pending.
 
@@ -241,7 +299,7 @@ Require reconstruction below -90 dB at all eight sizes and 44.1–192 kHz.
 Exercise mono/stereo, irregular blocks, bank morph, bin remapping and feedback.
 Check shifted delay/feedback/level routing, edge clamping, modulation and unchanged audio frequencies.
 Check size changes/clearing without C++ heap allocation and with continuous dry.
-Check v1/v2 migration, v3 recall, sanitization and exposed VST3 automation.
+Check legacy version rejection, v4 recall, sanitization and exposed VST3 automation.
 Render editor at default/minimum sizes when layout changes; verify toolbar/control bounds and bank count buttons.
 Do not claim commercial-DAW acceptance or listening tests passed unless performed.
 Signing/notarization and installers are deferred; local Gatekeeper exceptions

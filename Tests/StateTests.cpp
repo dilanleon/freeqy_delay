@@ -15,19 +15,31 @@ int main(int argc, char **argv)
     try
     {
         {
-            Processor presetProcessor;
+            auto presetOwner = std::make_unique<Processor>();
+            auto &presetProcessor = *presetOwner;
             auto editor = std::unique_ptr<juce::AudioProcessorEditor>(presetProcessor.createEditorAndMakeActive());
             auto *presetEditor = dynamic_cast<Editor *>(editor.get());
             juce::TextButton *menu = nullptr;
             juce::Slider *shiftDepth = nullptr;
             juce::Slider *morphDepthControl = nullptr;
+            juce::Slider *morphControl = nullptr;
+            juce::Slider *morphRateControl = nullptr;
             juce::Slider *maxDelayControl = nullptr;
+            juce::Slider *wetControl = nullptr;
+            juce::Slider *inputControl = nullptr;
+            juce::Label *inputLabel = nullptr;
             for (auto *child : editor->getChildren())
             {
                 if (child->getName() == "Preset menu") menu = dynamic_cast<juce::TextButton *>(child);
                 if (child->getName() == "shiftHz") shiftDepth = dynamic_cast<juce::Slider *>(child);
                 if (child->getName() == "morphDepth") morphDepthControl = dynamic_cast<juce::Slider *>(child);
+                if (child->getName() == "curveMorph") morphControl = dynamic_cast<juce::Slider *>(child);
+                if (child->getName() == "morphRateHz") morphRateControl = dynamic_cast<juce::Slider *>(child);
                 if (child->getName() == "maxDelayMs") maxDelayControl = dynamic_cast<juce::Slider *>(child);
+                if (child->getName() == "mix") wetControl = dynamic_cast<juce::Slider *>(child);
+                if (child->getName() == "inputTrimDb") inputControl = dynamic_cast<juce::Slider *>(child);
+                if (auto *label = dynamic_cast<juce::Label *>(child))
+                    if (label->getText() == "IN") inputLabel = label;
             }
             check(shiftDepth && shiftDepth->proportionOfLengthToValue(0) == 0 &&
                       std::abs(shiftDepth->proportionOfLengthToValue(1) - 1000) < .001 &&
@@ -38,14 +50,35 @@ int main(int argc, char **argv)
                   "curve shift host automation mapping changed");
             check(presetEditor && menu && menu->getButtonText() == "Presets",
                   "categorized preset menu button");
-            check(morphDepthControl && maxDelayControl &&
-                      morphDepthControl->getBottom() == editor->getHeight() - 34 &&
-                      maxDelayControl->getBottom() == editor->getHeight() - 24,
-                  "bottom controls should fill a shared compact strip with margins");
+            auto rotaryCentre = [](const juce::Slider &slider)
+            { return slider.getY() + (slider.getHeight() - 33) / 2; };
+            auto checkControlCentres = [&]
+            {
+                check(morphControl && morphDepthControl && morphRateControl &&
+                          maxDelayControl && wetControl && shiftDepth,
+                      "bottom controls missing");
+                const int centre = rotaryCentre(*maxDelayControl);
+                check(centre == rotaryCentre(*shiftDepth) &&
+                          centre == rotaryCentre(*wetControl) &&
+                          centre == morphControl->getBounds().getCentreY() &&
+                          centre == morphDepthControl->getBounds().getCentreY() &&
+                          centre == morphRateControl->getBounds().getCentreY(),
+                      "morph displays and rotary knobs should share a vertical centre");
+                check(morphControl->getHeight() == 64 && morphDepthControl->getHeight() == 64 &&
+                          morphRateControl->getHeight() == 64,
+                      "morph displays should be 15 percent shorter");
+                check(centre == editor->getHeight() - 16 - 170 + 84,
+                      "bottom controls should move upward in the strip");
+                check(maxDelayControl->getHeight() - 33 >=
+                          int((wetControl->getHeight() - 33) * 1.18),
+                      "Max Delay rotary area should be about 20 percent larger");
+            };
+            checkControlCentres();
+            check(inputControl && inputLabel && inputLabel->getX() > inputControl->getBounds().getCentreX() &&
+                      inputControl->getHeight() >= 75,
+                  "input trim label should sit beside the enlarged knob");
             editor->setSize(960, 700);
-            check(morphDepthControl->getBottom() == editor->getHeight() - 34 &&
-                      maxDelayControl->getBottom() == editor->getHeight() - 24,
-                  "minimum-size bottom controls should retain their shared strip alignment");
+            checkControlCentres();
             editor->setSize(1120, 800);
             auto *mix = presetProcessor.state.getParameter("mix");
             mix->setValueNotifyingHost(1.f);
@@ -558,7 +591,9 @@ int main(int argc, char **argv)
                 }
             }
             juce::PNGImageFormat png;
-            auto output = juce::File(argv[1]).createOutputStream();
+            juce::File outputPath(argv[1]);
+            outputPath.deleteFile();
+            auto output = outputPath.createOutputStream();
             check(output != nullptr, "snapshot output");
             check(png.writeImageToStream(editor->createComponentSnapshot(editor->getLocalBounds()),
                                          *output),
@@ -680,47 +715,23 @@ int main(int argc, char **argv)
             ->setValueNotifyingHost(p.state.getParameter("stftSize")->convertTo0to1(3));
         restored.setStateInformation(bytes.getData(), int(bytes.getSize()));
         auto tree = juce::ValueTree::readFromData(bytes.getData(), bytes.getSize());
-        tree.setProperty("version", 3, nullptr);
-        juce::MemoryBlock version3;
+        for (int version : {1, 2, 3, 5})
         {
-            juce::MemoryOutputStream out(version3, false);
+            tree.setProperty("version", version, nullptr);
+            juce::MemoryBlock unsupported;
+            juce::MemoryOutputStream out(unsupported, false);
             tree.writeToStream(out);
+            restored.setStateInformation(unsupported.getData(), int(unsupported.getSize()));
+            check(restored.getBanks().count == 3 && restored.selectedBank == 2,
+                  "unsupported state version should be ignored");
         }
-        restored.setStateInformation(version3.getData(), int(version3.getSize()));
-        check(restored.state.getRawParameterValue("stereoMorph")->load() == 0 &&
-                  std::abs(restored.state.getRawParameterValue("shiftHz")->load() - 123) < .001,
-              "v3 migration");
-        tree.setProperty("version", 1, nullptr);
-        tree.removeProperty("banks", nullptr);
-        spectral::Curves legacy;
-        legacy.values[0][0][17] = .83f;
-        tree.setProperty("curves", juce::MemoryBlock(&legacy, sizeof(legacy)), nullptr);
-        juce::MemoryBlock old;
-        {
-            juce::MemoryOutputStream out(old, false);
-            tree.writeToStream(out);
-        }
-        restored.setStateInformation(old.getData(), int(old.getSize()));
-        saved = restored.getBanks();
-        for (auto &bank : saved.banks)
-            check(bank.values[0][0][17] == .83f, "legacy curve migration");
-        check(restored.selectedBank == 0 &&
-                  restored.state.getRawParameterValue("curveMorph")->load() == 0,
-              "legacy morph reset");
-        check(restored.state.getRawParameterValue("shiftHz")->load() == 0 &&
-                  restored.state.getRawParameterValue("stftSize")->load() == 6,
-              "legacy effect defaults");
-        // Reject nonfinite stored curves and out-of-range counts.
-        tree.setProperty("version", 2, nullptr);
-        juce::ValueTree retired("PARAM");
-        retired.setProperty("id", "copies", nullptr);
-        retired.setProperty("value", 16, nullptr);
-        tree.addChild(retired, -1, nullptr);
+        // Reject nonfinite stored curves and out-of-range counts in the current schema.
+        tree.setProperty("version", 4, nullptr);
         saved.banks[0].values[0][0][0] = std::numeric_limits<float>::quiet_NaN();
         tree.setProperty("banks", juce::MemoryBlock(saved.banks.data(), sizeof(saved.banks)),
                          nullptr);
         tree.setProperty("bankCount", 99, nullptr);
-        old.reset();
+        juce::MemoryBlock old;
         {
             juce::MemoryOutputStream out(old, false);
             tree.writeToStream(out);
@@ -729,13 +740,7 @@ int main(int argc, char **argv)
         check(restored.getBanks().count == 4 &&
                   std::isfinite(restored.getBanks().banks[0].values[0][0][0]),
               "state sanitization");
-        juce::MemoryBlock migrated;
-        restored.getStateInformation(migrated);
-        auto modern = juce::ValueTree::readFromData(migrated.getData(), migrated.getSize());
-        check(int(modern.getProperty("version")) == 4 &&
-                  !modern.getChildWithProperty("id", "copies").isValid(),
-              "v2 migration cleanup");
-        std::cout << "Bank state, automation, legacy migration and sanitization passed\n";
+        std::cout << "Bank state, automation, version rejection and sanitization passed\n";
         return 0;
     }
     catch (const std::exception &error)

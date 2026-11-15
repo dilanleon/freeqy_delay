@@ -310,7 +310,6 @@ void Processor::getStateInformation(juce::MemoryBlock &block)
     tree.setProperty("linked", linked.load(), nullptr);
     tree.setProperty("spectrogramSpeed", spectrogramSpeed.load(), nullptr);
     auto banks = getBanks();
-    tree.removeProperty("curves", nullptr);
     tree.setProperty("bankCount", banks.count, nullptr);
     tree.setProperty("selectedBank", selectedBank.load(), nullptr);
     juce::MemoryBlock data(banks.banks.data(), sizeof(banks.banks));
@@ -322,70 +321,20 @@ void Processor::setStateInformation(const void *data, int size)
 {
     auto tree = juce::ValueTree::readFromData(data, size);
     if (!tree.isValid() || !tree.hasType("SpectralDelay") ||
-        (int(tree.getProperty("version", 0)) < 1 || int(tree.getProperty("version", 0)) > 4))
+        int(tree.getProperty("version", 0)) != 4)
         return;
-    const bool legacy = int(tree.getProperty("version", 0)) == 1;
     spectral::CurveBanks banks;
-    auto curveData = tree.getProperty(legacy ? "curves" : "banks");
+    auto curveData = tree.getProperty("banks");
     auto *binary = curveData.getBinaryData();
-    if (legacy && binary && binary->getSize() == sizeof(spectral::Curves))
-    {
-        spectral::Curves curves;
-        std::memcpy(&curves, binary->getData(), sizeof(curves));
-        for (auto &bank : banks.banks)
-            bank = curves;
-    }
-    else if (!legacy && binary && binary->getSize() == sizeof(banks.banks))
+    if (binary && binary->getSize() == sizeof(banks.banks))
         std::memcpy(banks.banks.data(), binary->getData(), sizeof(banks.banks));
-    banks.count = legacy ? 4 : juce::jlimit(1, 4, int(tree.getProperty("bankCount", 4)));
+    banks.count = juce::jlimit(1, 4, int(tree.getProperty("bankCount", 4)));
     for (auto &bank : banks.banks)
         for (auto &channel : bank.values)
             for (int type = 0; type < 3; ++type)
                 for (auto &value : channel[type])
                     value = std::isfinite(value) ? std::clamp(value, 0.f, 1.f)
                                                  : (type == 2 ? 1.f : 0.f);
-    if (legacy)
-    {
-        auto morph = tree.getChildWithProperty("id", "curveMorph");
-        if (!morph.isValid())
-        {
-            morph = juce::ValueTree("PARAM");
-            morph.setProperty("id", "curveMorph", nullptr);
-            tree.addChild(morph, -1, nullptr);
-        }
-        morph.setProperty("value", 0.f, nullptr);
-    }
-    // Retire the copy engine without reusing its automation IDs for different effects.
-    for (const char *id : {"copies", "spreadMs", "depth", "rateHz", "copyMode"})
-        tree.removeChild(tree.getChildWithProperty("id", id), nullptr);
-    if (int(tree.getProperty("version", 0)) < 3)
-        for (const char *id : {"shiftHz", "shiftRateHz", "stftSize"})
-        {
-            auto node = tree.getChildWithProperty("id", id);
-            if (!node.isValid())
-            {
-                node = juce::ValueTree("PARAM");
-                node.setProperty("id", id, nullptr);
-                tree.addChild(node, -1, nullptr);
-            }
-            auto *parameter = state.getParameter(id);
-            node.setProperty("value", parameter->convertFrom0to1(parameter->getDefaultValue()),
-                             nullptr);
-        }
-    if (int(tree.getProperty("version", 0)) < 4)
-        for (const char *id : {"stereoMorph", "morphDepth", "morphRateHz"})
-        {
-            auto node = tree.getChildWithProperty("id", id);
-            if (!node.isValid())
-            {
-                node = juce::ValueTree("PARAM");
-                node.setProperty("id", id, nullptr);
-                tree.addChild(node, -1, nullptr);
-            }
-            auto *parameter = state.getParameter(id);
-            node.setProperty("value", parameter->convertFrom0to1(parameter->getDefaultValue()),
-                             nullptr);
-        }
     // Reject nonfinite parameter payloads before they can reach delay-address calculations.
     for (auto child : tree)
     {
@@ -426,8 +375,7 @@ void Processor::setStateInformation(const void *data, int size)
     pointMode = bool(tree.getProperty("pointMode", false));
     state.replaceState(tree);
     updateBanks(banks);
-    selectedBank =
-        legacy ? 0 : juce::jlimit(0, banks.count - 1, int(tree.getProperty("selectedBank", 0)));
+    selectedBank = juce::jlimit(0, banks.count - 1, int(tree.getProperty("selectedBank", 0)));
     selectedCurve = juce::jlimit(0, 2, int(tree.getProperty("curve", 0)));
     selectedChannel = juce::jlimit(0, 1, int(tree.getProperty("channel", 0)));
     linked = bool(tree.getProperty("linked", false));
