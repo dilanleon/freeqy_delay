@@ -39,7 +39,7 @@ if(SPECTRAL_BUILD_CLAP)
 endif()
 # Keep the bundle and four-character codes stable: hosts use them to identify saved plug-in instances.
 juce_add_plugin(FreeqyDelay COMPANY_NAME "Station Sound" BUNDLE_ID "com.dleon.freeqydelay" PLUGIN_MANUFACTURER_CODE Dleo PLUGIN_CODE Frqy FORMATS ${spectral_formats} AAX_CATEGORY Delay PRODUCT_NAME "FREEQY DELAY" IS_SYNTH FALSE NEEDS_MIDI_INPUT FALSE NEEDS_MIDI_OUTPUT FALSE COPY_PLUGIN_AFTER_BUILD FALSE MICROPHONE_PERMISSION_ENABLED TRUE MICROPHONE_PERMISSION_TEXT "Analyze and process audio input")
-target_sources(FreeqyDelay PRIVATE Source/Engine.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+target_sources(FreeqyDelay PRIVATE Source/Engine.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/PresetFiles.cpp)
 target_compile_definitions(FreeqyDelay PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0 SPECTRAL_DIAGNOSTIC=$<BOOL:${SPECTRAL_DIAGNOSTIC}>)
 target_link_libraries(FreeqyDelay PRIVATE juce::juce_audio_utils juce::juce_dsp PUBLIC juce::juce_recommended_config_flags)
 if(SPECTRAL_BUILD_CLAP)

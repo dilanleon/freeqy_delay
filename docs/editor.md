@@ -8,7 +8,8 @@ Match the user sketch: four full-width bank tabs above the enlarged graph, Banks
 Below the graph: Delay / Level / Feedback, Scroll +/-, Resolution +/-, link icon,
 L/R, Reset, Clear Buffer. No visible copy or undo/redo controls.
 The link toggle displays two disconnected circles when off and overlapping connected circles when on.
-The top-bar Presets menu separates Plug-in and Selected Bank categories, each with Default.
+The top-bar Presets menu separates Plug-in and Selected Bank categories. Each submenu has
+Default, Save..., and Load... actions; the latter two use a native file dialog.
 Plug-in Default resets curve values (Delay 25%, Feedback 35%, Level 100%), enables one active
 bank, and sets Max Delay 1 s, Resolution 1024 samples, Wet 50%, and other parameters to zero.
 Selected Bank Default sets only that bank's curves to those curve values; it preserves global

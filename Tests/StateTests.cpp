@@ -1,6 +1,7 @@
 #include "BucketDisplay.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "PresetFiles.h"
 #include "SpectrogramHistory.h"
 #include <iostream>
 #include <stdexcept>
@@ -149,6 +150,68 @@ int main(int argc, char **argv)
                 check(updatedPoints.banks[size_t(b)][0][0].count == (b == 2 ? 0 : b + 1),
                       "selected-bank preset changed the wrong point data");
             bankPresetProcessor.editorBeingDeleted(editor.get());
+        }
+        {
+            Processor saved;
+            const auto folder = juce::File::getSpecialLocation(juce::File::tempDirectory);
+            const auto pluginFile = folder.getNonexistentChildFile("freeqy-plugin-preset-test", ".freeqy");
+            const auto bankFile = folder.getNonexistentChildFile("freeqy-bank-preset-test", ".freeqybank");
+            const auto badFile = folder.getNonexistentChildFile("freeqy-bad-preset-test", ".freeqybank");
+            saved.state.getParameter("mix")->setValueNotifyingHost(.8f);
+            auto banks = saved.getBanks();
+            banks.count = 3;
+            banks.banks[2].values[0][0][17] = .91f;
+            saved.updateBanks(banks);
+            auto points = saved.getPointCurves();
+            points.banks[2][0][0].count = 2;
+            points.banks[2][0][0].points[0] = {0, .2f, 0};
+            points.banks[2][0][0].points[1] = {1, .9f, 0};
+            saved.setPointCurves(points);
+            saved.selectedBank = 2;
+            check(spectral::presets::savePlugin(saved, pluginFile).wasOk(), "save plug-in preset");
+            check(spectral::presets::saveBank(saved, bankFile).wasOk(), "save selected-bank preset");
+            saved.state.getParameter("mix")->setValueNotifyingHost(.1f);
+            banks.banks[2].values[0][0][17] = .12f;
+            saved.updateBanks(banks);
+            saved.setPointCurves({});
+            check(spectral::presets::loadPlugin(saved, pluginFile).wasOk(), "load plug-in preset");
+            check(std::abs(saved.state.getRawParameterValue("mix")->load() - .8f) < .001f &&
+                      saved.getBanks().banks[2].values[0][0][17] == .91f &&
+                      saved.getPointCurves().banks[2][0][0].count == 2,
+                  "plug-in preset did not restore full state");
+            saved.selectedBank = 1;
+            banks = saved.getBanks();
+            banks.banks[1].values[0][0][17] = .05f;
+            saved.updateBanks(banks);
+            const auto mixBeforeBank = saved.state.getRawParameterValue("mix")->load();
+            check(spectral::presets::loadBank(saved, bankFile).wasOk(), "load selected-bank preset");
+            const auto loaded = saved.getBanks();
+            check(loaded.count == 3 && saved.selectedBank == 1 &&
+                      loaded.banks[1].values[0][0][17] == .91f &&
+                      loaded.banks[2].values[0][0][17] == .91f &&
+                      saved.getPointCurves().banks[1][0][0].count == 2 &&
+                      saved.state.getRawParameterValue("mix")->load() == mixBeforeBank,
+                  "selected-bank load changed global state or missed saved data");
+            check(spectral::presets::loadBank(saved, pluginFile).failed() &&
+                      spectral::presets::loadPlugin(saved, bankFile).failed(),
+                  "preset kinds should not be interchangeable");
+            check(badFile.replaceWithText("invalid preset") &&
+                      spectral::presets::loadBank(saved, badFile).failed() &&
+                      saved.getBanks().banks[1].values[0][0][17] == .91f,
+                  "invalid preset changed a bank");
+            juce::MemoryBlock bankBytes;
+            check(bankFile.loadFileAsData(bankBytes), "read bank preset for version check");
+            auto oldBankTree = juce::ValueTree::readFromData(bankBytes.getData(), bankBytes.getSize());
+            oldBankTree.setProperty("version", 2, nullptr);
+            juce::MemoryOutputStream oldBankBytes;
+            oldBankTree.writeToStream(oldBankBytes);
+            check(badFile.replaceWithData(oldBankBytes.getData(), oldBankBytes.getDataSize()) &&
+                      spectral::presets::loadBank(saved, badFile).failed() &&
+                      saved.getBanks().banks[1].values[0][0][17] == .91f,
+                  "unsupported bank preset version changed a bank");
+            pluginFile.deleteFile();
+            bankFile.deleteFile();
+            badFile.deleteFile();
         }
         spectral::PointCurve pointCurve;
         pointCurve.count = 2;

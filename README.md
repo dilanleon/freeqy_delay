@@ -37,7 +37,7 @@ target. A dim line shows the other channel when its selected curve differs.
 
 | Area | Controls | What they do |
 | --- | --- | --- |
-| Top bar | Presets; Draw / Points | Load a plug-in or selected-bank preset, or choose how to edit a curve. |
+| Top bar | Presets; Draw / Points | Save or load a plug-in or selected-bank preset, or choose how to edit a curve. |
 | Above graph | Bank 1–4; Banks − / + | Select an edit bank or change the active count. Disabled banks retain their shapes. |
 | Below graph | Delay / Level / Feedback; Scroll − / +; Resolution − / +; Link; L/R; Reset; Clear Buffer | Select a curve and channel, adjust the display and STFT, link edits, reset the selected curve, or clear the delay tail. |
 | Bottom strip | Morph / Depth / Rate and direction; Max Delay; Curve Shift Depth / Rate; Wet; IN / OUT | Set bank morph, delay scale, stereo curve movement, mix, and trims. |
@@ -58,6 +58,12 @@ and all other parameters to zero. The Default selected-bank preset sets those sa
 values only in the selected bank; it leaves global settings, bank count, selection, and other
 banks unchanged. The initial state without loading a preset has four active banks and 0.3 Hz
 defaults for the two modulation rates.
+
+Each preset submenu also has **Save...** and **Load...**. Plug-in presets use `.freeqy` files and
+restore parameters, all banks, and editor state. Selected Bank presets use `.freeqybank` files;
+loading one replaces the currently selected bank's curves and point data only. Choose a file
+location in the native dialog. Malformed, unsupported, or mismatched files are rejected
+without changing state.
 
 Max Delay displays milliseconds below 1000 ms and seconds from 1 s upward. A bare typed
 number uses the displayed unit; an explicit `ms` or `s` suffix overrides it. The Morph,
@@ -179,6 +185,7 @@ and relevant checks:
 | Build, formats, install | `CMakeLists.txt`, `Makefile` | `Tests/HostCheck.cpp`, `Tests/ClapCheck.cpp` |
 | STFT, delay history, feedback, morph, curve shift, latency | `Source/Engine.h`, `Source/Engine.cpp` | `Tests/Main.cpp` |
 | Host parameters, state loading, analyzer queues | `Source/PluginProcessor.h`, `Source/PluginProcessor.cpp` | `Tests/StateTests.cpp`, format checks |
+| Preset file validation and persistence | `Source/PresetFiles.h`, `Source/PresetFiles.cpp` | `Tests/StateTests.cpp` |
 | Editor layout, drawing, points, undo, keyboard commands | `Source/PluginEditor.h`, `Source/PluginEditor.cpp`, `Source/PointCurves.h` | `Tests/StateTests.cpp` |
 | Native controls and palette | `Source/EditorStyle.h`, `Source/FreeqyPalette.h` | editor rendering cases in `Tests/StateTests.cpp` |
 | Display cells, analyzer, scrolling history | `Source/BucketDisplay.h`, `Source/SpectrumAnalyzer.h`, `Source/SpectrogramHistory.h` | `Tests/StateTests.cpp` |

@@ -44,6 +44,7 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     juce::ComboBox stftSize, scrollSpeed;
     juce::TextButton presetMenu{"Presets"};
+    std::unique_ptr<juce::FileChooser> presetChooser;
     ChoiceStepper resolutionControl, scrollControl;
     juce::TextButton drawMode{"Draw"}, pointsMode{"Points"};
     int selectedPoint = -1, selectedSegment = -1;
@@ -104,4 +105,6 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     void stepHistory(bool backwards);
     // Invalidate queued frames and clear GUI-only history.
     void resetDisplayHistory();
+    // Open a native file picker for a plug-in or selected-bank preset.
+    void choosePresetFile(bool save, bool selectedBank);
 };

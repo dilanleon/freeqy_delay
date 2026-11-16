@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "PresetFiles.h"
 #include <limits>
 // Build the native editor and bind it to processor state.
 Editor::Editor(Processor &processor)
@@ -8,12 +9,18 @@ Editor::Editor(Processor &processor)
     setLookAndFeel(&style);
     addAndMakeVisible(presetMenu);
     presetMenu.setName("Preset menu");
-    presetMenu.setTooltip("Load a plug-in or selected-bank preset.");
+    presetMenu.setTooltip("Load or save plug-in and selected-bank presets.");
     presetMenu.onClick = [this]
     {
         juce::PopupMenu pluginPresets, bankPresets, presets;
         pluginPresets.addItem(1, "Default");
         bankPresets.addItem(2, "Default");
+        pluginPresets.addSeparator();
+        pluginPresets.addItem(3, "Save...");
+        pluginPresets.addItem(4, "Load...");
+        bankPresets.addSeparator();
+        bankPresets.addItem(5, "Save...");
+        bankPresets.addItem(6, "Load...");
         presets.addSubMenu("Plug-in", pluginPresets);
         presets.addSubMenu("Selected Bank", bankPresets);
         // The popup completes asynchronously and may outlive this editor.
@@ -27,6 +34,8 @@ Editor::Editor(Processor &processor)
                 safeThis->loadDefaultPreset();
             else if (result == 2)
                 safeThis->loadSelectedBankDefaultPreset();
+            else if (result >= 3 && result <= 6)
+                safeThis->choosePresetFile(result == 3 || result == 5, result >= 5);
         });
     };
     for (auto *button : {&drawMode, &pointsMode})
@@ -245,6 +254,54 @@ Editor::Editor(Processor &processor)
     resetDisplayHistory();
     timerCallback();
     startTimerHz(30);
+}
+// Open a native file picker for a plug-in or selected-bank preset.
+void Editor::choosePresetFile(bool save, bool selectedBank)
+{
+    const juce::String extension = selectedBank ? ".freeqybank" : ".freeqy";
+    const auto documents = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    const auto start = save ? documents.getChildFile("FREEQY DELAY" + extension) : documents;
+    presetChooser = std::make_unique<juce::FileChooser>(
+        save ? "Save preset" : "Load preset", start, "*" + extension);
+    const int flags = juce::FileBrowserComponent::canSelectFiles |
+                      (save ? juce::FileBrowserComponent::saveMode |
+                                  juce::FileBrowserComponent::warnAboutOverwriting
+                            : juce::FileBrowserComponent::openMode);
+    juce::Component::SafePointer<Editor> safeThis(this);
+    presetChooser->launchAsync(flags, [safeThis, save, selectedBank, extension](const juce::FileChooser &chooser)
+    {
+        if (safeThis == nullptr) return;
+        auto file = chooser.getResult();
+        if (file == juce::File()) return;
+        if (save) file = file.withFileExtension(extension);
+        auto &editor = *safeThis;
+        if (!save) editor.finishGesture();
+        const auto before = !save && selectedBank ? editor.snapshot() : Snapshot{};
+        const auto result = save ? (selectedBank ? spectral::presets::saveBank(editor.p, file)
+                                               : spectral::presets::savePlugin(editor.p, file))
+                                 : (selectedBank ? spectral::presets::loadBank(editor.p, file)
+                                                 : spectral::presets::loadPlugin(editor.p, file));
+        if (result.failed())
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                                   "Preset", result.getErrorMessage());
+            return;
+        }
+        if (!save)
+        {
+            editor.selectedPoint = editor.selectedSegment = -1;
+            if (selectedBank)
+            {
+                editor.undoStack.push_back(before);
+                if (editor.undoStack.size() > 100)
+                    editor.undoStack.erase(editor.undoStack.begin());
+            }
+            else
+                editor.undoStack.clear();
+            editor.redoStack.clear();
+            editor.timerCallback();
+        }
+    });
 }
 // Reset the whole plug-in to the documented Default preset.
 void Editor::loadDefaultPreset()

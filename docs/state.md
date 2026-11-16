@@ -16,3 +16,15 @@ Retire copies, spreadMs, depth, rateHz, copyMode; never reuse their IDs.
 Clamp invalid values in version 4 states.
 State curve bytes are native little-endian floats on supported macOS targets.
 The old multi-copy/chorus engine has been removed.
+
+## Preset files
+
+Plug-in `.freeqy` files contain the complete version 4 `SpectralDelay` host state, including
+parameters, all four stored banks, point editor data, bank count and editor selection. A
+plug-in load replaces the current state. Selected Bank `.freeqybank` files have a separate
+`FreeqyBankPreset` version 1 root and contain one bank's six curves and point editor data.
+Loading one applies it to the currently selected bank, preserving global parameters, bank
+count, selection and other banks. Preset files have distinct types; malformed, unsupported or
+truncated files are rejected before state is changed. File I/O runs from the editor, never
+the audio thread. Preset files use the project's native little-endian float layout on the
+supported macOS target.
