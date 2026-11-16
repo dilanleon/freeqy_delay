@@ -5,6 +5,7 @@
 class EditorStyle final : public juce::LookAndFeel_V4
 {
   public:
+    // Install the FREEQY DELAY control palette.
     EditorStyle()
     {
         setColour(juce::Slider::textBoxTextColourId, freeqy::cyan);
@@ -20,6 +21,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
         setColour(juce::PopupMenu::highlightedBackgroundColourId, freeqy::deepViolet);
         setColour(juce::PopupMenu::highlightedTextColourId, freeqy::cyan);
     }
+    // Paint button surfaces and the active top marker.
     void drawButtonBackground(juce::Graphics &g, juce::Button &button, const juce::Colour &,
                               bool over, bool down) override
     {
@@ -36,6 +38,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
             g.fillRect(bounds.removeFromTop(2));
         }
     }
+    // Paint tab and channel-selector text.
     void drawButtonText(juce::Graphics &g, juce::TextButton &button, bool, bool) override
     {
         g.setFont(button.getComponentID() == "bankTab" ? 18.f : 14.f);
@@ -55,6 +58,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
         g.drawText(button.getButtonText(), button.getLocalBounds().reduced(3, 0),
                    juce::Justification::centred);
     }
+    // Paint the link and stereo-morph direction icons.
     void drawToggleButton(juce::Graphics &g, juce::ToggleButton &button, bool over, bool) override
     {
         const auto box = button.getLocalBounds().toFloat().reduced(.5f);
@@ -92,6 +96,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
             }
         }
     }
+    // Paint rotary controls or a body-free digital morph value.
     void drawRotarySlider(juce::Graphics &g, int x, int y, int width, int height, float position,
                           float start, float end, juce::Slider &slider) override
     {
@@ -143,6 +148,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
                    center.x + std::sin(angle) * radius * .8f,
                    center.y - std::cos(angle) * radius * .8f, 2);
     }
+    // Paint the custom vertical trim rail and marker.
     void drawLinearSlider(juce::Graphics &g, int x, int y, int width, int height, float sliderPos,
                           float, float, const juce::Slider::SliderStyle style,
                           juce::Slider &slider) override
@@ -170,6 +176,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
         g.setColour(freeqy::cyan);
         g.fillEllipse(rail.getCentreX() - 3, markerY - 3, 6, 6);
     }
+    // Route slider value labels through the seven-segment renderer.
     void drawLabel(juce::Graphics &g, juce::Label &label) override
     {
         // Slider text boxes are the plugin's numerical readouts. Other labels
@@ -185,6 +192,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
     }
 
   public:
+    // Define logarithmic knob travel without changing host normalization.
     static juce::NormalisableRange<double> shiftDepthRange()
     {
         // Offset-log mapping gives zero an exact position while spacing small shifts finely.
@@ -195,6 +203,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
                 [](double start, double end, double value)
                 { return std::log1p((value - start) / offsetHz) / std::log1p((end - start) / offsetHz); }};
     }
+    // Paint a seven-segment value with a separate glowing unit.
     static void drawSegmentDisplay(juce::Graphics &g, juce::Rectangle<int> bounds,
                                    const juce::String &text)
     {
@@ -240,6 +249,8 @@ class EditorStyle final : public juce::LookAndFeel_V4
             g.setFont(juce::FontOptions(25.f).withStyle("Bold"));
             const int unitX = int(bulb.getX()) + 7;
             const int baseline = int(bulb.getCentreY()) + 7;
+            // Draw the bloom from the same positioned glyphs as the foreground so
+            // the larger unit text keeps one baseline at every control size.
             juce::GlyphArrangement glyphs;
             glyphs.addLineOfText(g.getCurrentFont(), unit, float(unitX), float(baseline));
             g.setColour(freeqy::pink.withAlpha(.16f));
@@ -260,6 +271,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
             glyphs.draw(g);
         }
     }
+    // Format a slider value using its displayed unit.
     static juce::String sliderText(const juce::Slider &slider, const juce::String &fallback)
     {
         const auto name = slider.getName();
@@ -279,11 +291,13 @@ class EditorStyle final : public juce::LookAndFeel_V4
             return juce::String(value, 2) + " %";
         return fallback;
     }
+    // Choose the Max Delay unit at the one-second boundary.
     static bool delayUsesSeconds(double milliseconds)
     {
         // APVTS normalization can return the 1000 ms default a few ulps below 1000.
         return milliseconds >= 999.999;
     }
+    // Parse Max Delay text using its displayed or explicit unit.
     static double delayValueFromText(const juce::String &text, double displayedMilliseconds)
     {
         const auto unitText = text.trim().toLowerCase();
@@ -294,6 +308,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
                    ? value * 1000.0
                    : value;
     }
+    // Paint one seven-segment numeral or punctuation glyph.
     static void drawDigit(juce::Graphics &g, juce::juce_wchar character, juce::Rectangle<float> box)
     {
         if (character == '.')
@@ -336,6 +351,7 @@ class EditorStyle final : public juce::LookAndFeel_V4
 class ChoiceStepper final : public juce::Component, public juce::SettableTooltipClient
 {
   public:
+    // Bind compact step buttons to an existing choice control.
     ChoiceStepper(juce::ComboBox &model, juce::String caption)
         : choice(model), title(std::move(caption))
     {
@@ -347,12 +363,14 @@ class ChoiceStepper final : public juce::Component, public juce::SettableTooltip
         more.setTooltip(title + ": next setting");
         setName(title);
     }
+    // Apply one help message to the stepper and its buttons.
     void setHelpText(const juce::String &text)
     {
         setTooltip(text);
         less.setTooltip(text);
         more.setTooltip(text);
     }
+    // Update stepper availability from the selected choice.
     void refresh()
     {
         const bool reverse = title == "Scroll";
@@ -362,6 +380,7 @@ class ChoiceStepper final : public juce::Component, public juce::SettableTooltip
                                 : choice.getSelectedId() < choice.getNumItems());
         repaint();
     }
+    // Paint the stepper caption and selected value.
     void paint(juce::Graphics &g) override
     {
         g.setColour(freeqy::panel);
@@ -385,6 +404,7 @@ class ChoiceStepper final : public juce::Component, public juce::SettableTooltip
                                                                                                  1),
             text);
     }
+    // Place the stepper buttons at opposite ends.
     void resized() override
     {
         less.setBounds(0, 0, 23, getHeight());
@@ -395,6 +415,7 @@ class ChoiceStepper final : public juce::Component, public juce::SettableTooltip
     juce::ComboBox &choice;
     juce::String title;
     juce::TextButton less{"-"}, more{"+"};
+    // Move one choice while respecting the Scroll ordering.
     void step(int direction)
     {
         // Scroll choices are ordered fastest first.

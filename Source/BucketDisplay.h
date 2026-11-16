@@ -10,14 +10,17 @@ struct BucketDisplay
     int size;
     double sampleRate;
     float left, width;
+    // Return the physical-frequency spacing between logical display cells.
     double spacing() const
     {
         return (MaxHz - MinHz) / (size / 2);
     }
+    // Map a logical cell center to its visible frequency.
     double frequency(int k) const
     {
         return MinHz + std::clamp(k, 0, size / 2) * spacing();
     }
+    // Map a cell edge to a physical-frequency boundary.
     double boundaryFrequency(int edge) const
     {
         if (edge <= 0)
@@ -26,32 +29,40 @@ struct BucketDisplay
             return MaxHz;
         return .5 * (frequency(edge - 1) + frequency(edge));
     }
+    // Place a physical frequency on the logarithmic display axis.
     float xAt(double frequency) const
     {
         return left + float(std::log(std::clamp(frequency, MinHz, MaxHz) / MinHz) /
                             std::log(MaxHz / MinHz)) *
                           width;
     }
+    // Hit-test a display position against the logical cell grid.
     int binAt(float x) const
     {
         const double fraction = std::clamp((x - left) / width, 0.f, 1.f);
         const double frequency = MinHz * std::pow(MaxHz / MinHz, fraction);
         return std::clamp(int(std::round((frequency - MinHz) / spacing())), 0, size / 2);
     }
+    // Return the pixel-space boundaries of a logical cell.
     std::pair<float, float> edges(int k) const
     {
         return {xAt(boundaryFrequency(k)), xAt(boundaryFrequency(k + 1))};
     }
+    // Map a display cell to the fixed saved-curve grid.
     float curvePosition(int k) const
     {
         return float(std::clamp(frequency(k) * N / sampleRate, 0., double(B - 1)));
     }
+    // Return the nearest saved-curve index for a display cell.
     int curveIndex(int k) const
     {
         return std::clamp(int(std::round(curvePosition(k))), 0, B - 1);
     }
+    // Return all saved-grid samples affected by one drawn display cell.
     std::pair<int, int> cell(int k) const
     {
+        // A visible cell can be narrower than one saved-grid step. Include its center
+        // sample even when no integer grid point falls strictly inside its edges.
         const double lo = boundaryFrequency(k) * N / sampleRate;
         const double hi = boundaryFrequency(k + 1) * N / sampleRate;
         int first = std::clamp(int(std::ceil(lo)), 0, B - 1);
@@ -62,6 +73,7 @@ struct BucketDisplay
         last = std::max(last, curveIndex(k));
         return {first, last};
     }
+    // Interpolate a saved curve at a display-cell frequency.
     float curveValue(const Curve &curve, int k) const
     {
         const float position = curvePosition(k);

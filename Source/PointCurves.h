@@ -13,8 +13,11 @@ struct PointCurve
     static constexpr int capacity = 64;
     int count = 0;
     std::array<CurvePoint, capacity> points{};
+    // Choose logarithmic anchors that retain drawn-curve detail.
     static PointCurve fromCurve(const Curve &source, double sampleRate)
     {
+        // Saved curves are Nyquist-relative; point anchors live on the visible
+        // logarithmic frequency axis, so conversion must use physical hertz.
         auto sampleAt = [&](double hz)
         {
             const float index = float(std::clamp(hz * N / sampleRate, 0., double(B - 1)));
@@ -73,6 +76,7 @@ struct PointCurve
             result.points[i] = candidates[chosen[i]];
         return result;
     }
+    // Evaluate a curved point segment at a display-axis position.
     float valueAt(float x) const
     {
         if (count < 1) return 0;
@@ -102,6 +106,7 @@ struct PointCurve
         a.shape = std::clamp(std::log((1.f - fraction) / fraction) / 3.f, -1.f, 1.f);
         return true;
     }
+    // Render point anchors onto the fixed saved-curve grid.
     void render(Curve &curve, double sampleRate) const
     {
         for (int i = 0; i < B; ++i)

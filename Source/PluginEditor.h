@@ -6,21 +6,33 @@
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
   public:
+    // Build the native editor and bind it to processor state.
     explicit Editor(Processor &);
+    // Stop GUI refresh before releasing the custom look and feel.
     ~Editor() override
     {
         stopTimer();
         setLookAndFeel(nullptr);
     }
+    // Render the graph, activity, curves, and panel surfaces.
     void paint(juce::Graphics &) override;
+    // Lay out the graph, bank tools, toolbar, and bottom controls.
     void resized() override;
+    // Begin a bucket or point-edit gesture from the graph.
     void mouseDown(const juce::MouseEvent &) override;
+    // Update the active bucket, anchor, or curvature edit.
     void mouseDrag(const juce::MouseEvent &) override;
+    // Finish or cancel a gesture after a resolution change.
     void mouseUp(const juce::MouseEvent &) override;
+    // Update the hovered cell and physical-value readout.
     void mouseMove(const juce::MouseEvent &) override;
+    // Drain analyzer frames and refresh GUI-owned visual state.
     void refreshDisplay(double nowSeconds);
+    // Handle gesture undo and redo shortcuts.
     bool keyPressed(const juce::KeyPress &) override;
+    // Reset the whole plug-in to the documented Default preset.
     void loadDefaultPreset();
+    // Reset only the selected bank and its point metadata.
     void loadSelectedBankDefaultPreset();
 
   private:
@@ -38,8 +50,11 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     float handleDragOffset = 0;
     bool pointGesture = false;
     struct Snapshot { spectral::CurveBanks banks; spectral::PointCurves points; };
+    // Capture banks and point metadata for one undo step.
     Snapshot snapshot();
+    // Render the selected point curve onto saved-grid values.
     void applyPointCurve();
+    // Create point anchors from a drawn curve on first use.
     void ensurePoints();
     juce::TextButton bankLess{"-"}, bankMore{"+"};
     std::array<juce::TextButton, 3> parameterButtons;
@@ -69,14 +84,24 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     int lastBin = -1, gestureSize = 0;
     float lastValue = 0;
     juce::String readout;
+    // Refresh the display on the GUI timer.
     void timerCallback() override;
+    // Hit-test a graph position against the current bucket layout.
     int bin(float) const;
+    // Construct the sample-rate-aware visible bucket mapping.
     spectral::BucketDisplay buckets() const;
+    // Paint all saved samples covered by dragged display cells.
     void drawAt(juce::Point<float>);
+    // Save an undo snapshot and publish a curve edit.
     void commit(const spectral::Curves &);
+    // Commit one completed drawing gesture to undo history.
     void finishGesture();
+    // Restore the pre-gesture snapshot after STFT automation.
     void cancelGesture();
+    // Change the active bank count while retaining stored shapes.
     void changeBankCount(int delta);
+    // Restore a bank and point snapshot for undo or redo.
     void stepHistory(bool backwards);
+    // Invalidate queued frames and clear GUI-only history.
     void resetDisplayHistory();
 };

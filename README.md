@@ -168,8 +168,11 @@ adapter and browser UI would be separate targets. No `.wclap` artifact is built.
 
 ## Development map
 
-Read [AGENTS.md](AGENTS.md) for the project's detailed behavior, compatibility, and
-real-time constraints. Use this map to find the implementation and relevant checks:
+Read [AGENTS.md](AGENTS.md) for workflow and core invariants. The detailed design lives in
+[DSP architecture](docs/architecture.md), [visualization](docs/visualization.md),
+[editor](docs/editor.md), [parameters and state](docs/state.md), and
+[build and validation](docs/build-and-validation.md). Use this map to find the implementation
+and relevant checks:
 
 | Area | Implementation | Tests and checks |
 | --- | --- | --- |

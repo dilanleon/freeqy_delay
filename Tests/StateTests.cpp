@@ -4,11 +4,13 @@
 #include "SpectrogramHistory.h"
 #include <iostream>
 #include <stdexcept>
+// Stop the state and editor suite at the first failed requirement.
 void check(bool ok, const char *message)
 {
     if (!ok)
         throw std::runtime_error(message);
 }
+// Run preset, state, display, analyzer, and editor regressions.
 int main(int argc, char **argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -50,6 +52,7 @@ int main(int argc, char **argv)
                   "curve shift host automation mapping changed");
             check(presetEditor && menu && menu->getButtonText() == "Presets",
                   "categorized preset menu button");
+            // Rotary Slider bounds include a 33 px value box below the body.
             auto rotaryCentre = [](const juce::Slider &slider)
             { return slider.getY() + (slider.getHeight() - 33) / 2; };
             auto checkControlCentres = [&]
@@ -73,6 +76,7 @@ int main(int argc, char **argv)
                           int((wetControl->getHeight() - 33) * 1.18),
                       "Max Delay rotary area should be about 20 percent larger");
             };
+            // Protect the proportions at both documented editor sizes.
             checkControlCentres();
             check(inputControl && inputLabel && inputLabel->getX() > inputControl->getBounds().getCentreX() &&
                       inputControl->getHeight() >= 75,
@@ -715,6 +719,7 @@ int main(int argc, char **argv)
             ->setValueNotifyingHost(p.state.getParameter("stftSize")->convertTo0to1(3));
         restored.setStateInformation(bytes.getData(), int(bytes.getSize()));
         auto tree = juce::ValueTree::readFromData(bytes.getData(), bytes.getSize());
+        // Unsupported versions must leave the last valid v4 state untouched.
         for (int version : {1, 2, 3, 5})
         {
             tree.setProperty("version", version, nullptr);

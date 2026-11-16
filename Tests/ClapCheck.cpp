@@ -11,29 +11,36 @@
 #include <string>
 #include <vector>
 
+// Stop the CLAP smoke test at the first failed host assertion.
 static void check(bool condition, const char *message)
 {
     if (!condition)
         throw std::runtime_error(message);
 }
 
+// Report that the minimal test host exposes no optional extensions.
 static const void *CLAP_ABI hostExtension(const clap_host_t *, const char *)
 {
     return nullptr;
 }
+// Accept a host request without scheduling any extra work in this smoke test.
 static void CLAP_ABI hostRequest(const clap_host_t *) {}
+// Present an empty input-event list to the plug-in.
 static uint32_t CLAP_ABI eventCount(const clap_input_events_t *)
 {
     return 0;
 }
+// Return no event because the test host provides no input events.
 static const clap_event_header_t *CLAP_ABI eventGet(const clap_input_events_t *, uint32_t)
 {
     return nullptr;
 }
+// Accept output events without retaining them in this audio-only smoke test.
 static bool CLAP_ABI eventPush(const clap_output_events_t *, const clap_event_header_t *)
 {
     return true;
 }
+// Append serialized CLAP state bytes to the test-owned buffer.
 static int64_t CLAP_ABI streamWrite(const clap_ostream_t *stream, const void *data, uint64_t size)
 {
     auto &bytes = *static_cast<std::vector<uint8_t> *>(stream->ctx);
@@ -46,6 +53,7 @@ struct Reader
     const std::vector<uint8_t> &bytes;
     size_t offset = 0;
 };
+// Read serialized state bytes from the test-owned buffer.
 static int64_t CLAP_ABI streamRead(const clap_istream_t *stream, void *data, uint64_t size)
 {
     auto &reader = *static_cast<Reader *>(stream->ctx);
@@ -58,6 +66,7 @@ static int64_t CLAP_ABI streamRead(const clap_istream_t *stream, void *data, uin
 
 struct StagedBundle
 {
+    // Copy the bundle outside the workspace before loading it through dyld.
     explicit StagedBundle(const std::filesystem::path &source)
     {
         const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -70,6 +79,7 @@ struct StagedBundle
                                   std::filesystem::copy_options::copy_symlinks);
     }
 
+    // Remove the temporary host-loading copy after the test.
     ~StagedBundle()
     {
         std::error_code ignored;
@@ -80,6 +90,7 @@ struct StagedBundle
     std::filesystem::path bundle;
 };
 
+// Scan, instantiate, process, and round-trip state through native CLAP.
 int main(int argc, char **argv)
 {
     try

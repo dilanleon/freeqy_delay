@@ -3,6 +3,7 @@
 namespace spectral
 {
 static constexpr double tau = 2 * std::numbers::pi;
+// Allocate worst-case FFT history and initialize sample-rate state.
 void Engine::prepare(double sampleRate, int count)
 {
     sr = sampleRate;
@@ -18,6 +19,7 @@ void Engine::prepare(double sampleRate, int count)
         sineTable[i] = float(std::sin(tau * i / 4096));
     reset();
 }
+// Select preallocated FFT resources for the requested size.
 void Engine::configureSize(int requested)
 {
     size = validSize(requested);
@@ -40,6 +42,7 @@ void Engine::configureSize(int requested)
             channels[ch].level[k] = banks.shiftedSample(ch, 2, index, offsets[ch], sr, positions[ch]);
         }
 }
+// Reset delay history and smoothing without changing settings.
 void Engine::reset()
 {
     epoch = 1;
@@ -68,6 +71,7 @@ void Engine::reset()
     }
     clearWetHistory();
 }
+// Invalidate spectral tails while preserving dry alignment.
 void Engine::clearWetHistory()
 {
     delayAnalyzer.reset();
@@ -84,6 +88,7 @@ void Engine::clearWetHistory()
     }
     // Dry PDC, curve banks, smoothing, and modulation phases are preserved.
 }
+// Look up a complex phase rotation without trigonometry per bin.
 Engine::C Engine::rotation(float cycles) const
 {
     cycles -= std::floor(cycles);
@@ -94,8 +99,11 @@ Engine::C Engine::rotation(float cycles) const
     return {sineTable[j] * (1 - f) + sineTable[j + 1] * f,
             sineTable[i] * (1 - f) + sineTable[i + 1] * f};
 }
+// Interpolate a phase-aligned delayed spectral frame.
 Engine::C Engine::read(const Channel &channel, int k, float samples, bool current, C now) const
 {
+    // Spectral frames are separated by one hop. Rotate neighboring coefficients to the
+    // requested fractional time before blending so the phase does not collapse.
     float d = std::clamp(samples / float(step), current ? 0.f : 1.f, float(frames - 2));
     int q = int(d);
     float a = d - q;
@@ -112,6 +120,7 @@ Engine::C Engine::read(const Channel &channel, int k, float samples, bool curren
         result = {result.real(), 0};
     return result;
 }
+// Process one analysis hop across the active frequency bins.
 void Engine::transform()
 {
     // Only evaluate active FFT bins; a 16-sample window must not blend 1025 points per hop.
@@ -154,6 +163,7 @@ void Engine::transform()
     historyEpoch[size_t(frame)] = epoch;
     frame = (frame + 1) % frames;
 }
+// Process audio with fixed latency and optional bypass.
 void Engine::process(float *const *data, int count, bool bypass)
 {
     juce::ScopedNoDenormals noDenormals;

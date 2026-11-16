@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <numbers>
+// Define stable automatable host parameters and defaults.
 juce::AudioProcessorValueTreeState::ParameterLayout Processor::layout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout p;
@@ -44,6 +45,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout Processor::layout()
     add("morphRateHz", "Stereo Morph Rate (Hz)", 0, 10, .3f, .5f);
     return p;
 }
+// Initialize the host processor and its versioned APVTS root.
 Processor::Processor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
@@ -52,12 +54,14 @@ Processor::Processor()
 {
     startTimerHz(30);
 }
+// Accept matching mono or stereo input and output layouts.
 bool Processor::isBusesLayoutSupported(const BusesLayout &l) const
 {
     return l.getMainInputChannelSet() == l.getMainOutputChannelSet() &&
            (l.getMainOutputChannelSet() == juce::AudioChannelSet::mono() ||
             l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo());
 }
+// Allocate DSP state and establish the fixed host latency.
 void Processor::prepareToPlay(double sr, int)
 {
     engine.setSettings(readSettings());
@@ -78,16 +82,19 @@ void Processor::prepareToPlay(double sr, int)
     sinePhase = 0;
     setLatencySamples(SPECTRAL_DIAGNOSTIC ? 0 : spectral::Latency);
 }
+// Copy GUI point metadata under the model lock.
 spectral::PointCurves Processor::getPointCurves()
 {
     std::lock_guard lock(modelMutex);
     return pointModel;
 }
+// Replace GUI point metadata without touching DSP state.
 void Processor::setPointCurves(const spectral::PointCurves &points)
 {
     std::lock_guard lock(modelMutex);
     pointModel = points;
 }
+// Read the selected edit-bank curves under the model lock.
 spectral::Curves Processor::getCurves()
 {
     std::lock_guard lock(modelMutex);
@@ -109,11 +116,13 @@ void Processor::updateCurves(const spectral::Curves &c)
         pending = false;
     }
 }
+// Copy all stored banks under the model lock.
 spectral::CurveBanks Processor::getBanks()
 {
     std::lock_guard lock(modelMutex);
     return model;
 }
+// Replace stored banks and schedule an audio-thread snapshot.
 void Processor::updateBanks(const spectral::CurveBanks &banks)
 {
     {
@@ -135,6 +144,7 @@ void Processor::updateTailFlag()
                 holds = holds || channel[1][i] >= 1.f;
     infiniteFeedback.store(holds, std::memory_order_relaxed);
 }
+// Retry bounded curve publication off the audio thread.
 void Processor::publishPending()
 {
     std::lock_guard lock(modelMutex);
@@ -149,6 +159,7 @@ void Processor::publishPending()
         pending = false;
     }
 }
+// Feed pre-effect samples to the stereo input analyzer.
 void Processor::analyze(const juce::AudioBuffer<float> &buffer, int offset, int count)
 {
     for (int n = offset; n < offset + count; ++n)
@@ -158,8 +169,11 @@ void Processor::analyze(const juce::AudioBuffer<float> &buffer, int offset, int 
         spectrumReady = inputAnalyzer.advance(buffer.getNumChannels()) || spectrumReady;
     }
 }
+// Read the next non-stale analyzer frame in timestamp order.
 bool Processor::nextSpectrum(Spectrum &out)
 {
+    // A visual reset can race a block already in flight. Such a block may enqueue
+    // afterward, so reject by epoch as well as draining what is currently queued.
     for (;;)
     {
         int a, n, b, m;
@@ -172,6 +186,7 @@ bool Processor::nextSpectrum(Spectrum &out)
             return true;
     }
 }
+// Read the newest available analyzer frame.
 bool Processor::spectrum(Spectrum &out)
 {
     bool found = false;
@@ -179,6 +194,7 @@ bool Processor::spectrum(Spectrum &out)
         found = true;
     return found;
 }
+// Drain queued analyzer frames without resetting the producer.
 void Processor::discardSpectra()
 {
     Spectrum discarded;
@@ -186,13 +202,17 @@ void Processor::discardSpectra()
         if (!nextSpectrum(discarded))
             break;
 }
+// Invalidate in-flight frames and empty visual transfer.
 void Processor::restartSpectra()
 {
     spectrumEpoch.fetch_add(1, std::memory_order_acq_rel);
     discardSpectra();
 }
+// Bound GUI work and optionally discard stalled frames.
 int Processor::drainSpectra(Spectrum *out, int capacity, double maxAgeSeconds)
 {
+    // Compare against audio time, not the GUI clock: hosts can pause without
+    // advancing either analyzer. Snapshot the FIFO count to bound one GUI drain.
     const double newest = latestMeterSeconds.load(std::memory_order_acquire);
     Spectrum frame;
     int count = 0;
@@ -205,6 +225,7 @@ int Processor::drainSpectra(Spectrum *out, int capacity, double maxAgeSeconds)
     }
     return count;
 }
+// Snapshot atomic host parameters for one audio block.
 spectral::Settings Processor::readSettings() const
 {
     spectral::Settings s;
@@ -222,9 +243,11 @@ spectral::Settings Processor::readSettings() const
     s.outputTrimDb = v("outputTrimDb");
     return s;
 }
+// Bridge host buffers, control snapshots, DSP, and analyzer transfer.
 void Processor::process(juce::AudioBuffer<float> &buffer, bool bypass)
 {
     juce::ScopedNoDenormals guard;
+    // One tag covers the whole host block, including hops enqueued after a GUI reset.
     const uint64_t captureEpoch = spectrumEpoch.load(std::memory_order_acquire);
     for (int remaining = curveFifo.getNumReady(); remaining > 0; --remaining)
     {
@@ -267,6 +290,7 @@ void Processor::process(juce::AudioBuffer<float> &buffer, bool bypass)
         {
             int a, n, b, m;
             spectrumFifo.prepareToWrite(1, a, n, b, m);
+            // The wet analyzer still contains pre-clear samples during the fade.
             if (n && (SPECTRAL_DIAGNOSTIC || !engine.wetClearActive()))
             {
                 spectrumQueue[a].input = inputAnalyzer.latest();
@@ -286,18 +310,22 @@ void Processor::process(juce::AudioBuffer<float> &buffer, bool bypass)
         liveShift[ch].store(engine.shiftOffsets()[ch], std::memory_order_relaxed);
     }
 }
+// Process normal audio through the spectral engine.
 void Processor::processBlock(juce::AudioBuffer<float> &b, juce::MidiBuffer &)
 {
     process(b, false);
 }
+// Process bypass with the same dry-path latency.
 void Processor::processBlockBypassed(juce::AudioBuffer<float> &b, juce::MidiBuffer &)
 {
     process(b, true);
 }
+// Construct the native JUCE editor.
 juce::AudioProcessorEditor *Processor::createEditor()
 {
     return new Editor(*this);
 }
+// Serialize version 4 parameters, banks, and editor state.
 void Processor::getStateInformation(juce::MemoryBlock &block)
 {
     auto tree = state.copyState();
@@ -317,9 +345,12 @@ void Processor::getStateInformation(juce::MemoryBlock &block)
     juce::MemoryOutputStream stream(block, false);
     tree.writeToStream(stream);
 }
+// Validate and restore a version 4 state payload.
 void Processor::setStateInformation(const void *data, int size)
 {
     auto tree = juce::ValueTree::readFromData(data, size);
+    // State loading is v4-only. Reject unsupported payloads before replacing APVTS
+    // or changing any curve/editor model, leaving the current instance intact.
     if (!tree.isValid() || !tree.hasType("SpectralDelay") ||
         int(tree.getProperty("version", 0)) != 4)
         return;
@@ -381,6 +412,7 @@ void Processor::setStateInformation(const void *data, int size)
     linked = bool(tree.getProperty("linked", false));
     spectrogramSpeed = juce::jlimit(0, 3, int(tree.getProperty("spectrogramSpeed", 2)));
 }
+// Create the processor instance requested by JUCE hosts.
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()
 {
     return new Processor;

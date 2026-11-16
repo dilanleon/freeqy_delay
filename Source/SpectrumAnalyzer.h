@@ -9,11 +9,13 @@ using StereoSpectrum = std::array<std::array<float, 1025>, 2>;
 class SpectrumAnalyzer
 {
   public:
+    // Cache the periodic Hann window for stereo analysis.
     SpectrumAnalyzer()
     {
         for (int i = 0; i < 2048; ++i)
             window[i] = float(.5 - .5 * std::cos(2 * std::numbers::pi * i / 2048));
     }
+    // Clear captured samples and published magnitudes.
     void reset()
     {
         for (auto &channel : input)
@@ -22,12 +24,15 @@ class SpectrumAnalyzer
             channel.fill(0);
         position = hop = 0;
     }
+    // Write one channel sample into the current analysis position.
     void push(int channel, float sample)
     {
         input[channel][position] = sample;
     }
+    // Publish a stereo 2048-point spectrum every 256 samples.
     bool advance(int channels)
     {
+        // Keep a complete two-channel frame for the GUI even when the host runs mono.
         if (channels == 1)
             input[1][position] = input[0][position];
         position = (position + 1) % 2048;
@@ -44,6 +49,7 @@ class SpectrumAnalyzer
         }
         return true;
     }
+    // Return the most recently completed stereo spectrum.
     const StereoSpectrum &latest() const
     {
         return values;

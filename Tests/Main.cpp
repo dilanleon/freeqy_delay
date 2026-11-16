@@ -7,6 +7,7 @@
 #include <stdexcept>
 static thread_local bool checking = false;
 static thread_local int allocations = 0;
+// Count allocations made while the DSP test marks an audio-thread call.
 void *operator new(std::size_t size)
 {
     if (checking)
@@ -15,25 +16,30 @@ void *operator new(std::size_t size)
         return p;
     throw std::bad_alloc();
 }
+// Release storage allocated by the test's global new hook.
 void operator delete(void *p) noexcept
 {
     std::free(p);
 }
+// Route array allocations through the same counted allocation hook.
 void *operator new[](std::size_t size)
 {
     return ::operator new(size);
 }
+// Release storage allocated by the array allocation hook.
 void operator delete[](void *p) noexcept
 {
     ::operator delete(p);
 }
 using namespace spectral;
+// Stop the DSP suite at the first failed requirement.
 void require(bool ok, const char *msg)
 {
     if (!ok)
         throw std::runtime_error(msg);
 }
 constexpr double tau = 6.2831853071795864769;
+// Build curves with no feedback or wet level for reconstruction checks.
 Curves transparent()
 {
     Curves c;
@@ -44,6 +50,7 @@ Curves transparent()
     }
     return c;
 }
+// Exercise irregular host blocks and reject allocations inside processing.
 void run(Engine &engine, std::vector<float> &left, std::vector<float> &right, int channels = 2,
          bool bypass = false)
 {
@@ -58,6 +65,7 @@ void run(Engine &engine, std::vector<float> &left, std::vector<float> &right, in
         at += count;
     }
 }
+// Measure reconstruction error in decibels after latency alignment.
 double relativeError(const std::vector<float> &actual, const std::vector<float> &input, int delay)
 {
     double error = 0, power = 0;
@@ -68,6 +76,7 @@ double relativeError(const std::vector<float> &actual, const std::vector<float> 
     }
     return 10 * std::log10(error / power);
 }
+// Estimate the amplitude of one frequency in a signal window.
 double amplitude(const std::vector<float> &signal, double hz, double sr, int start, int length)
 {
     std::complex<double> sum{};
@@ -75,6 +84,7 @@ double amplitude(const std::vector<float> &signal, double hz, double sr, int sta
         sum += double(signal[n]) * std::polar(1., -tau * hz * n / sr);
     return 2 * std::abs(sum) / length;
 }
+// Run DSP, latency, modulation, clearing, and allocation regressions.
 int main()
 {
     try

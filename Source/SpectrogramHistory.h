@@ -9,15 +9,18 @@ class SpectrogramHistory
 {
   public:
     static constexpr int Rows = 180;
+    // Allocate GUI-only stereo history and start it empty.
     SpectrogramHistory() : frames(Rows)
     {
         clear();
     }
+    // Map the display speed index to visible history duration.
     static double secondsForSpeed(int index)
     {
         constexpr double seconds[] = {1.5, 3., 6., 12.};
         return seconds[std::clamp(index, 0, 3)];
     }
+    // Restart visual history when its time scale changes.
     void setSpeed(int index)
     {
         const double seconds = secondsForSpeed(index);
@@ -27,10 +30,12 @@ class SpectrogramHistory
             clear();
         }
     }
+    // Return the duration represented by one raster row.
     double secondsPerRow() const
     {
         return duration / Rows;
     }
+    // Clear stored rows, held frames, and raster dirty state.
     void clear()
     {
         for (auto &frame : frames)
@@ -43,6 +48,7 @@ class SpectrogramHistory
         lastFresh = -1;
         dirty.fill(true);
     }
+    // Place a timestamped analyzer frame into the scrolling ring.
     void append(double now, double rate, const StereoSpectrum *incoming)
     {
         if (rate != sampleRate)
@@ -63,6 +69,7 @@ class SpectrogramHistory
         {
             if (incoming)
             {
+                // Several analyzer hops may land in one display row; keep the peak.
                 for (int ch = 0; ch < 2; ++ch)
                     for (int k = 0; k < B; ++k)
                         frames[head][ch][k] = std::max(frames[head][ch][k], (*incoming)[ch][k]);
@@ -82,10 +89,12 @@ class SpectrogramHistory
             frames[head] = *source;
         lastTick = tick;
     }
+    // Read a ring row by its age from the newest row.
     const StereoSpectrum &atAge(int age) const
     {
         return frames[(head + std::clamp(age, 0, Rows - 1)) % Rows];
     }
+    // Rasterize only dirty history rows for the chosen channel.
     const juce::Image &image(int width, int channel)
     {
         width = std::max(1, width);
@@ -128,9 +137,12 @@ class SpectrogramHistory
         }
         return raster;
     }
+    // Draw the ring raster with the newest row at the top.
     void draw(juce::Graphics &g, juce::Rectangle<int> target, int channel)
     {
         const auto &source = image(target.getWidth(), channel);
+        // The raster stays in ring order. Draw its two contiguous spans with head
+        // first so scrolling needs only dirty-row updates, not an image copy.
         const int firstRows = Rows - head,
                   firstHeight = int(std::round(target.getHeight() * float(firstRows) / Rows));
         g.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
@@ -143,6 +155,7 @@ class SpectrogramHistory
     }
 
   public:
+    // Map analyzer intensity through the four palette anchors.
     static juce::Colour color(uint8_t intensity)
     {
         // Reference palette: ink → indigo → blue → cyan. Keep black at silence

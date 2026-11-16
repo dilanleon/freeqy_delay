@@ -11,6 +11,7 @@ using Curve = std::array<float, B>;
 struct Curves
 {
     std::array<std::array<Curve, 3>, 2> values{};
+    // Initialize the six stereo maps to their default values.
     Curves()
     {
         for (auto &ch : values)
@@ -42,6 +43,7 @@ struct CurveBanks
         };
         return at(a) + (position - a) * (at(b) - at(a));
     }
+    // Convert a frequency offset to a clamped saved-grid index.
     static float shiftedIndex(float index, float offsetHz, double sampleRate)
     {
         return std::clamp(index - offsetHz * float(N / sampleRate), 0.f, float(B - 1));
@@ -80,6 +82,7 @@ struct CurveBanks
                            visibleLast, std::min(1.f, std::abs(offsetHz) / 1000.f));
         return sample(ch, type, shiftedIndex(index, offsetHz, sampleRate), percent);
     }
+    // Render the active bank morph into one curve snapshot.
     void blend(float percent, Curves &result) const
     {
         const int active = std::clamp(count, 1, 4);
@@ -105,32 +108,41 @@ struct Settings
 class Engine
 {
   public:
+    // Allocate worst-case FFT history and initialize sample-rate state.
     void prepare(double, int);
+    // Reset delay history and smoothing without changing settings.
     void reset();
+    // Start a transient wet-tail clear on the audio thread.
     void requestClear()
     {
         clearPending = true;
     }
+    // Transfer the current host settings into the engine.
     void setSettings(Settings value)
     {
         settings = value;
     }
+    // Install a legacy single-bank curve snapshot for independent DSP use.
     void setCurves(const Curves &value)
     {
         for (auto &bank : banks.banks)
             bank = value;
         banks.count = 1;
     }
+    // Install a complete bank snapshot without allocation.
     void setBanks(const CurveBanks &value)
     {
         banks = value;
     }
+    // Process audio with fixed latency and optional bypass.
     void process(float *const *, int, bool bypass = false);
+    // Compute wrapped opposite-direction morph positions.
     static std::array<float, 2> stereoPositions(float center, float depth, float movement)
     {
         auto wrap = [](float value) { return value - 100.f * std::floor(value / 100.f); };
         return {wrap(center + depth * movement), wrap(center - depth * movement)};
     }
+    // Return the smoothed live morph positions for both channels.
     std::array<float, 2> morphPositions() const
     {
         if (morphDepth == 0)
@@ -140,6 +152,7 @@ class Engine
         return {wrap(morphPosition + morphDepth * movement),
                 wrap(morphPosition + morphDepth * movement * (1.f - 2.f * morphDirectionBlend))};
     }
+    // Return the live opposite-channel curve offsets.
     std::array<float, 2> shiftOffsets() const
     {
         const float phase = float(std::sin(lfoPhase) * (1 - shiftHold) + shiftHold);
@@ -150,16 +163,20 @@ class Engine
         const float offset = amount * std::asinh(shape * phase) / normalizer;
         return {offset, -offset};
     }
+    // Expose the latest wet-return analyzer frame.
     const StereoSpectrum &delaySpectrum() const
     {
         return delayAnalyzer.latest();
     }
+    // Report the active STFT window size.
     int activeSize() const
     {
         return size;
     }
+    // Report whether wet-clear transition frames must be hidden.
     bool wetClearActive() const
     {
+        // The processor suppresses meter frames until both sides of the clear fade finish.
         return clearPending || wetClearGain < 1.f;
     }
 
@@ -189,11 +206,17 @@ class Engine
     float mix = .5f, inGain = 1, outGain = 1, morphPosition = 0, amount = 0, rate = .3f,
           shiftHold = 0, wetClearGain = 1;
     bool clearPending = false;
+    // Select preallocated FFT resources for the requested size.
     void configureSize(int);
+    // Invalidate spectral tails while preserving dry alignment.
     void clearWetHistory();
+    // Process one analysis hop across the active frequency bins.
     void transform();
+    // Look up a complex phase rotation without trigonometry per bin.
     C rotation(float) const;
+    // Interpolate a phase-aligned delayed spectral frame.
     C read(const Channel &, int, float, bool, C = {}) const;
+    // Clamp an STFT request to a supported power of two.
     static int validSize(int value)
     {
         return 1 << std::clamp(int(std::log2(std::max(16, value))), 4, 11);

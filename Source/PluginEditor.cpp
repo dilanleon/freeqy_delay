@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include <limits>
+// Build the native editor and bind it to processor state.
 Editor::Editor(Processor &processor)
     : AudioProcessorEditor(processor), p(processor), resolutionControl(stftSize, "Resolution"),
       scrollControl(scrollSpeed, "Scroll")
@@ -15,6 +16,7 @@ Editor::Editor(Processor &processor)
         bankPresets.addItem(2, "Default");
         presets.addSubMenu("Plug-in", pluginPresets);
         presets.addSubMenu("Selected Bank", bankPresets);
+        // The popup completes asynchronously and may outlive this editor.
         juce::Component::SafePointer<Editor> safeThis(this);
         presets.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&presetMenu),
                               [safeThis](int result)
@@ -38,6 +40,8 @@ Editor::Editor(Processor &processor)
     drawMode.onClick = [this] { finishGesture(); p.pointMode = false; selectedPoint = -1; repaint(); };
     pointsMode.onClick = [this] { finishGesture(); p.pointMode = true; selectedPoint = -1; repaint(); };
     setWantsKeyboardFocus(true);
+    // knobs[] order is Wet, Max Delay, Curve Shift Depth/Rate, then IN/OUT trims.
+    // resized() uses these same indices to place and size each control.
     const char *ids[] = {"mix",         "maxDelayMs",  "shiftHz",
                          "shiftRateHz", "inputTrimDb", "outputTrimDb"};
     const char *names[] = {"Wet", "Max Delay", "Depth Hz", "Rate Hz", "IN", "OUT"};
@@ -46,6 +50,7 @@ Editor::Editor(Processor &processor)
         addAndMakeVisible(knobs[i]);
         knobs[i].setName(ids[i]);
         knobs[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        // The 33 px value box sits below each rotary body; trims override its dimensions later.
         knobs[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 96, 33);
         addAndMakeVisible(labels[i]);
         labels[i].setText(names[i], juce::dontSendNotification);
@@ -234,12 +239,14 @@ Editor::Editor(Processor &processor)
         for (auto *control : getChildren())
             control->setVisible(false);
     setResizable(true, true);
+    // The minimum still fits the graph, toolbar, and five bottom control panels.
     setResizeLimits(960, 700, 2000, 1400);
     setSize(1120, 800);
     resetDisplayHistory();
     timerCallback();
     startTimerHz(30);
 }
+// Reset the whole plug-in to the documented Default preset.
 void Editor::loadDefaultPreset()
 {
     finishGesture();
@@ -279,6 +286,7 @@ void Editor::loadDefaultPreset()
     p.updateBanks(banks);
     timerCallback();
 }
+// Reset only the selected bank and its point metadata.
 void Editor::loadSelectedBankDefaultPreset()
 {
     finishGesture();
@@ -293,6 +301,8 @@ void Editor::loadSelectedBankDefaultPreset()
         channel[2].fill(1.f);
     }
     auto points = p.getPointCurves();
+    // Clear the bank's point metadata too; otherwise a later point edit could
+    // render its old shape over the newly reset grid curves.
     points.banks[size_t(bankIndex)] = {};
     undoStack.push_back(snapshot());
     if (undoStack.size() > 100)
@@ -302,8 +312,10 @@ void Editor::loadSelectedBankDefaultPreset()
     p.setPointCurves(points);
     timerCallback();
 }
+// Invalidate queued frames and clear GUI-only history.
 void Editor::resetDisplayHistory()
 {
+    // Invalidate in-flight analyzer blocks before clearing the GUI-owned ring.
     p.restartSpectra();
     delayHistory.clear();
     for (auto &channel : magnitudes)
@@ -311,6 +323,7 @@ void Editor::resetDisplayHistory()
     displayClockOffset = 0;
     lastDisplayAudio = lastDisplayArrival = -1;
 }
+// Change the active bank count while retaining stored shapes.
 void Editor::changeBankCount(int delta)
 {
     finishGesture();
@@ -328,6 +341,7 @@ void Editor::changeBankCount(int delta)
     p.updateBanks(banks);
     timerCallback();
 }
+// Restore a bank and point snapshot for undo or redo.
 void Editor::stepHistory(bool backwards)
 {
     finishGesture();
@@ -343,6 +357,7 @@ void Editor::stepHistory(bool backwards)
     source.pop_back();
     timerCallback();
 }
+// Handle gesture undo and redo shortcuts.
 bool Editor::keyPressed(const juce::KeyPress &key)
 {
     if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z')
@@ -352,6 +367,7 @@ bool Editor::keyPressed(const juce::KeyPress &key)
     }
     return false;
 }
+// Save an undo snapshot and publish a curve edit.
 void Editor::commit(const spectral::Curves &c)
 {
     undoStack.push_back(snapshot());
@@ -361,10 +377,12 @@ void Editor::commit(const spectral::Curves &c)
     p.updateCurves(c);
     repaint();
 }
+// Refresh the display on the GUI timer.
 void Editor::timerCallback()
 {
     refreshDisplay(juce::Time::getMillisecondCounterHiRes() * .001);
 }
+// Drain analyzer frames and refresh GUI-owned visual state.
 void Editor::refreshDisplay(double nowSeconds)
 {
     if ((lastBin >= 0 || pointGesture) && gestureSize != buckets().size)
@@ -427,8 +445,10 @@ void Editor::refreshDisplay(double nowSeconds)
     link.setToggleState(p.linked, juce::dontSendNotification);
     repaint();
 }
+// Lay out the graph, bank tools, toolbar, and bottom controls.
 void Editor::resized()
 {
+    // Top row: preset button at right, then Draw and Points mode buttons at left.
     auto header = getLocalBounds().removeFromTop(40).withTrimmedLeft(200).withTrimmedRight(24).reduced(0, 5);
     presetMenu.setBounds(header.removeFromRight(140));
     drawMode.setBounds(header.removeFromLeft(70));
@@ -436,6 +456,7 @@ void Editor::resized()
     auto area = getLocalBounds().reduced(16);
     area.removeFromTop(25);
     curvePanel = area;
+    // The 42 px bank row has four equal tabs and a 106 px +/- area on the right.
     auto tabs = area.removeFromTop(42);
     bankTools = tabs.removeFromRight(106);
     const int tabWidth = tabs.getWidth() / 4;
@@ -443,12 +464,17 @@ void Editor::resized()
         bankButtons[i].setBounds(i == 3 ? tabs : tabs.removeFromLeft(tabWidth));
     bankMore.setBounds(bankTools.getRight() - 31, bankTools.getY(), 31, 21);
     bankLess.setBounds(bankTools.getRight() - 31, bankTools.getY() + 21, 31, 21);
+    // The strip reserves enough height for Max Delay's larger rotary body and
+    // two stacked trims while keeping their value boxes inside the panel.
     constexpr int bottomStripHeight = 170;
     auto bottom = area.removeFromBottom(bottomStripHeight);
+    // The 49 px editing toolbar sits directly above the bottom controls.
     toolbar = area.removeFromBottom(49);
     // Axis and pointer readout belong to the display, above the editing toolbar.
     plot = area.withTrimmedBottom(40).reduced(1, 0);
     auto tools = toolbar.reduced(8, 6);
+    // Nominal widths, including a residual Clear Buffer slot, scale to the toolbar width.
+    // parameterButtons are indexed Delay=0, Feedback=1, Level=2, hence the 0/2/1 order.
     const float scale = float(tools.getWidth() - 8 * 5) / 888.f;
     auto placeTool = [&](juce::Component &control, int width)
     {
@@ -465,26 +491,33 @@ void Editor::resized()
     placeTool(reset, 70);
     clearBuffer.setBounds(tools);
     const int width = bottom.getWidth();
+    // Left to right: Bank Morph 37%, Max Delay 17%, Curve Shift 23%, Wet 12%, trims remainder.
     morphPanel = bottom.removeFromLeft(int(width * .37f));
     delayPanel = bottom.removeFromLeft(int(width * .17f));
     shiftPanel = bottom.removeFromLeft(int(width * .23f));
     mixPanel = bottom.removeFromLeft(int(width * .12f));
     gainPanel = bottom;
     auto morphArea = morphPanel.reduced(8, 0);
+    // Reserve 38 px for the direction arrows, then split Morph/Depth/Rate evenly.
     morphArea.removeFromLeft(38);
+    // Arrow button: 30 x 58, centered vertically beside the three numeric controls.
     stereoMorph.setBounds(morphPanel.getX() + 7, bottom.getY() + 55, 30, 58);
     const int numberWidth = morphArea.getWidth() / 3;
     for (auto pair : {std::pair{&morph, &morphLabel}, std::pair{&morphDepth, &morphDepthLabel},
                       std::pair{&morphRate, &morphRateLabel}})
     {
         auto cell = morphArea.removeFromLeft(numberWidth);
+        // The heading is 18 px high at y+29; its digital value occupies y+52 through y+116.
         pair.second->setBounds(cell.withY(bottom.getY() + 29).withHeight(18));
         pair.first->setBounds(cell.withY(bottom.getY() + 52).withHeight(64));
     }
+    // Indices: 1=Max Delay, 2/3=Curve Shift Depth/Rate, 0=Wet.
+    // Max Delay gets the taller 110 px slider; the other three use 98 px.
     auto rotary = [this, bottom](int index, juce::Rectangle<int> cell)
     {
         cell = cell.reduced(3, 0);
         labels[index].setBounds(cell.withY(bottom.getY() + 29).withHeight(18));
+        // Rotary bounds include the value box; its extra 33 px sits below the cap.
         const bool large = index == 1;
         knobs[index].setBounds(cell.withY(bottom.getY() + (large ? 46 : 52))
                                     .withHeight(large ? 110 : 98));
@@ -495,6 +528,8 @@ void Editor::resized()
     rotary(2, shift.removeFromLeft(half));
     rotary(3, shift);
     rotary(0, mixPanel);
+    // IN (index 4) and OUT (index 5) are stacked in the rightmost panel.
+    // Each 77 px slider uses panel width minus 20; its label hugs the panel's right edge.
     for (int i : {4, 5})
     {
         const int rowY = bottom.getY() + (i == 4 ? 2 : 81);
@@ -503,19 +538,23 @@ void Editor::resized()
                                  gainPanel.getWidth() - 20, 29);
         labels[i].setBounds(gainPanel.getRight() - 37, rowY + 13, 34, 22);
     }
+    // The diagnostic replaces the normal graph/control layout with one FFT plot.
     if constexpr (SPECTRAL_DIAGNOSTIC)
         plot = getLocalBounds().reduced(24).withTrimmedTop(55).withTrimmedBottom(45);
 }
+// Construct the sample-rate-aware visible bucket mapping.
 spectral::BucketDisplay Editor::buckets() const
 {
     return {16 << juce::jlimit(0, 7, int(p.state.getRawParameterValue("stftSize")->load())),
             p.getSampleRate() > 0 ? p.getSampleRate() : 48000., float(plot.getX()),
             float(plot.getWidth())};
 }
+// Hit-test a graph position against the current bucket layout.
 int Editor::bin(float x) const
 {
     return buckets().binAt(x);
 }
+// Render the graph, activity, curves, and panel surfaces.
 void Editor::paint(juce::Graphics &g)
 {
     g.fillAll(freeqy::ink);
@@ -707,6 +746,7 @@ void Editor::paint(juce::Graphics &g)
     g.drawText(readout, 24, plot.getBottom() + 20, getWidth() - 48, 18,
                juce::Justification::centred);
 }
+// Paint all saved samples covered by dragged display cells.
 void Editor::drawAt(juce::Point<float> point)
 {
     if (SPECTRAL_DIAGNOSTIC)
@@ -747,6 +787,7 @@ void Editor::drawAt(juce::Point<float> point)
     p.updateCurves(drawing);
     repaint();
 }
+// Begin a bucket or point-edit gesture from the graph.
 void Editor::mouseDown(const juce::MouseEvent &e)
 {
     if (!plot.contains(e.getPosition()) || SPECTRAL_DIAGNOSTIC)
@@ -820,6 +861,7 @@ void Editor::mouseDown(const juce::MouseEvent &e)
     lastBin = -1;
     drawAt(e.position);
 }
+// Update the active bucket, anchor, or curvature edit.
 void Editor::mouseDrag(const juce::MouseEvent &e)
 {
     if (pointGesture && selectedSegment >= 0)
@@ -848,6 +890,7 @@ void Editor::mouseDrag(const juce::MouseEvent &e)
     }
     else if (lastBin >= 0) drawAt(e.position);
 }
+// Finish or cancel a gesture after a resolution change.
 void Editor::mouseUp(const juce::MouseEvent &)
 {
     if ((lastBin >= 0 || pointGesture) && gestureSize != buckets().size)
@@ -855,10 +898,13 @@ void Editor::mouseUp(const juce::MouseEvent &)
     else
         finishGesture();
 }
+// Restore the pre-gesture snapshot after STFT automation.
 void Editor::cancelGesture()
 {
     if (lastBin < 0 && !pointGesture)
         return;
+    // Automated resolution changes invalidate bucket coordinates mid-drag. Restore
+    // both representations without adding a partial edit to undo history.
     p.updateBanks(beforeBanks.banks);
     p.setPointCurves(beforeBanks.points);
     lastBin = -1;
@@ -866,6 +912,7 @@ void Editor::cancelGesture()
     selectedPoint = selectedSegment = -1;
     repaint();
 }
+// Commit one completed drawing gesture to undo history.
 void Editor::finishGesture()
 {
     if (lastBin < 0 && !pointGesture)
@@ -878,6 +925,7 @@ void Editor::finishGesture()
     pointGesture = false;
     selectedSegment = -1;
 }
+// Update the hovered cell and physical-value readout.
 void Editor::mouseMove(const juce::MouseEvent &e)
 {
     int k = bin(e.position.x), t = p.selectedCurve;
@@ -890,7 +938,9 @@ void Editor::mouseMove(const juce::MouseEvent &e)
               juce::String(k) + "  |  " + juce::String(physical, 2) + (t == 0 ? " ms" : " %");
 }
 
+// Capture banks and point metadata for one undo step.
 Editor::Snapshot Editor::snapshot() { return {p.getBanks(), p.getPointCurves()}; }
+// Create point anchors from a drawn curve on first use.
 void Editor::ensurePoints()
 {
     auto points = p.getPointCurves();
@@ -902,6 +952,7 @@ void Editor::ensurePoints()
     curve = spectral::PointCurve::fromCurve(source, sr);
     p.setPointCurves(points);
 }
+// Render the selected point curve onto saved-grid values.
 void Editor::applyPointCurve()
 {
     const auto points = p.getPointCurves();

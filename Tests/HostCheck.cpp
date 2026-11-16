@@ -5,6 +5,7 @@
 
 struct StagedBundle
 {
+    // Copy the VST3 bundle to the host-like temporary loading location.
     explicit StagedBundle(const std::filesystem::path &source)
     {
         const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -17,6 +18,7 @@ struct StagedBundle
                                   std::filesystem::copy_options::copy_symlinks);
     }
 
+    // Remove the temporary VST3 copy after host validation.
     ~StagedBundle()
     {
         std::error_code ignored;
@@ -27,6 +29,7 @@ struct StagedBundle
     std::filesystem::path bundle;
 };
 
+// Validate VST3 discovery, processing, automation, state, and editor creation.
 int main(int argc, char **argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
