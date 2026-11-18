@@ -68,7 +68,17 @@ test -d "$clap"
 test -d "$au"
 FREEQY_TEST_INSTALLED_VST3="$vst3" FREEQY_TEST_INSTALLED_CLAP="$clap" \
     ctest --test-dir "$build_dir" -C Release --output-on-failure -R '^(vst3_host|clap_host)$'
-/usr/bin/auval -v aufx Frqy Dleo
+# Refresh the disposable runner's AU registry after the system install.
+/usr/bin/killall -9 -u "$(id -un)" AudioComponentRegistrar 2>/dev/null || true
+for attempt in {1..10}; do
+    if /usr/bin/auval -a > "$work/audio-units.txt" &&
+        /usr/bin/awk '$1 == "aufx" && $2 == "Frqy" && $3 == "Dleo" { found = 1 } END { exit !found }' "$work/audio-units.txt"; then
+        break
+    fi
+    sleep 2
+done
+/usr/bin/auval -v aufx Frqy Dleo | tee "$work/auval.log"
+/usr/bin/grep -Fq 'AU VALIDATION SUCCEEDED' "$work/auval.log"
 sudo touch "$vst3/.install-smoke-test" "$clap/.install-smoke-test"
 install_formats clap au
 test ! -e "$vst3/.install-smoke-test"
