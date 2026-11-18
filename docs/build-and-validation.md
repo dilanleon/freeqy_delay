@@ -38,13 +38,14 @@ bundle as WebCLAP or claim a .wclap artifact until that separate target exists.
 
 Run **Internal installers** from the private repository's Actions tab. Each native
 job builds and tests Release and uploads its installer as a 14-day workflow artifact.
+The platform input defaults to all three and also supports rerunning a single platform.
 The workflow skips packaging in a public repository. Only repository readers can
 download the internal artifacts. For current validation results, check the workflow run.
 
 | CI build | Release asset | Install destinations |
 | --- | --- | --- |
 | macOS 13+ target, universal arm64/x86_64 | `FREEQY-DELAY-macOS.pkg` | System `/Library/Audio/Plug-Ins/{VST3,CLAP,Components}` |
-| Windows 11 x64 target, Visual Studio 2022 and Inno Setup 6 | `FREEQY-DELAY-Windows-x64-Setup.exe` | System `%CommonProgramFiles%\VST3` and `%CommonProgramFiles%\CLAP` |
+| Windows 11 x64 target, Visual Studio 2026 and Inno Setup 6 | `FREEQY-DELAY-Windows-x64-Setup.exe` | System `%CommonProgramFiles%\VST3` and `%CommonProgramFiles%\CLAP` |
 | Ubuntu 24.04 baseline, x86-64, JUCE Linux dependencies | `FREEQY-DELAY-Linux-x86_64.tar.gz` | Per-user `~/.vst3` and `~/.clap` |
 
 Each installer lets the user select formats. Release builds keep the complete VST3

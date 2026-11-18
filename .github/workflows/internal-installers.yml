@@ -2,13 +2,23 @@ name: Internal installers
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Installer to build
+        type: choice
+        default: all
+        options:
+          - all
+          - macos
+          - windows
+          - linux
 
 permissions:
   contents: read
 
 jobs:
   macos:
-    if: ${{ github.event.repository.private }}
+    if: ${{ github.event.repository.private && (inputs.platform == 'all' || inputs.platform == 'macos') }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -32,8 +42,8 @@ jobs:
           retention-days: 14
 
   windows:
-    if: ${{ github.event.repository.private }}
-    runs-on: windows-2025
+    if: ${{ github.event.repository.private && (inputs.platform == 'all' || inputs.platform == 'windows') }}
+    runs-on: windows-2025-vs2026
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 -DSPECTRAL_BUILD_CLAP=ON '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>'
+          cmake -S . -B build -G 'Visual Studio 18 2026' -A x64 -DSPECTRAL_BUILD_CLAP=ON '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>'
           cmake --build build --config Release --parallel 3
           ctest --test-dir build -C Release --output-on-failure
       - name: Build and exercise the installer
@@ -59,7 +69,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ github.event.repository.private }}
+    if: ${{ github.event.repository.private && (inputs.platform == 'all' || inputs.platform == 'linux') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
