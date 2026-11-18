@@ -3,10 +3,11 @@
 #include <array>
 #include <cmath>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
-#include <dlfcn.h>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -101,20 +102,27 @@ int main(int argc, char **argv)
             std::cerr << message << '\n';
             std::cerr.flush();
         };
-        check(argc == 2, "expected CLAP bundle path");
+        check(argc == 3, "expected CLAP artifact path and module name");
+        const auto *installed = std::getenv("FREEQY_TEST_INSTALLED_CLAP");
+        const auto sourcePath = std::filesystem::absolute(installed != nullptr ? installed : argv[1]);
+        auto artifact = sourcePath;
+#if JUCE_MAC
         // dyld on macOS 26 may indefinitely validate signed modules opened directly
         // from a sync-managed Documents workspace. Real hosts use installed bundles,
         // so stage an identical copy in the system temporary directory for this smoke test.
-        StagedBundle staged(std::filesystem::absolute(argv[1]));
-        const std::string bundle = staged.bundle.string();
-        const auto executable = bundle + "/Contents/MacOS/FREEQY DELAY";
-        void *library = dlopen(executable.c_str(), RTLD_NOW | RTLD_LOCAL);
-        const auto *loadError = library == nullptr ? dlerror() : nullptr;
-        check(library != nullptr, loadError != nullptr ? loadError : "could not load CLAP");
+        std::optional<StagedBundle> staged;
+        if (installed == nullptr)
+            artifact = staged.emplace(sourcePath).bundle;
+#endif
+        const auto executable = std::filesystem::is_directory(artifact) ? artifact / argv[2] : artifact;
+        juce::DynamicLibrary library;
+        if (!library.open(juce::String(executable.c_str())))
+            throw std::runtime_error("could not load CLAP module: " + executable.string());
         progress("loaded");
-        const auto *entry = static_cast<const clap_plugin_entry_t *>(dlsym(library, "clap_entry"));
+        const auto *entry = static_cast<const clap_plugin_entry_t *>(library.getFunction("clap_entry"));
         check(entry && clap_version_is_compatible(entry->clap_version), "invalid clap_entry");
-        check(entry->init(bundle.c_str()), "CLAP entry initialization failed");
+        const juce::String entryPath(artifact.c_str());
+        check(entry->init(entryPath.toRawUTF8()), "CLAP entry initialization failed");
         progress("entry initialized");
         const auto *factory = static_cast<const clap_plugin_factory_t *>(
             entry->get_factory(CLAP_PLUGIN_FACTORY_ID));
@@ -181,7 +189,6 @@ int main(int argc, char **argv)
         progress("destroyed");
         entry->deinit();
         progress("entry deinitialized");
-        dlclose(library);
         std::cout << "CLAP scanned, instantiated, processed and recalled state\n";
         return 0;
     }

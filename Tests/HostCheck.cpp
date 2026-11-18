@@ -1,6 +1,8 @@
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 struct StagedBundle
@@ -35,16 +37,19 @@ int main(int argc, char **argv)
     juce::ScopedJuceInitialiser_GUI init;
     if (argc < 2)
         return 2;
-    bool diagnostic = argc > 2;
     juce::VST3PluginFormat format;
     juce::OwnedArray<juce::PluginDescription> types;
-    const auto source = juce::File::isAbsolutePath(argv[1])
-                            ? juce::File(argv[1])
-                            : juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]);
+    const auto *installed = std::getenv("FREEQY_TEST_INSTALLED_VST3");
+    const auto input = std::filesystem::absolute(installed != nullptr ? installed : argv[1]);
+    auto loadPath = input;
+#if JUCE_MAC
     // Match an installed host path and avoid macOS 26 dyld stalls on freshly
     // packaged signed bundles inside a sync-managed Documents workspace.
-    StagedBundle staged(std::filesystem::path(source.getFullPathName().toStdString()));
-    const juce::File path(staged.bundle.string());
+    std::optional<StagedBundle> staged;
+    if (installed == nullptr)
+        loadPath = staged.emplace(input).bundle;
+#endif
+    const juce::File path(juce::String(loadPath.c_str()));
     format.findAllTypesForFile(types, path.getFullPathName());
     if (types.isEmpty())
     {
@@ -80,13 +85,26 @@ int main(int argc, char **argv)
         return 1;
     }
     plugin->prepareToPlay(48000, 512);
-    if (plugin->getLatencySamples() != (diagnostic ? 0 : 2048))
+    if (plugin->getLatencySamples() != 2048)
     {
         std::cerr << "Wrong latency\n";
         return 1;
     }
     juce::AudioBuffer<float> audio(2, 512);
     juce::MidiBuffer midi;
+    // Silence must stay silent: the effect must never synthesize an output signal.
+    for (int block = 0; block < 8; ++block)
+    {
+        audio.clear();
+        plugin->processBlock(audio, midi);
+        for (int channel = 0; channel < 2; ++channel)
+            for (int sample = 0; sample < audio.getNumSamples(); ++sample)
+                if (audio.getSample(channel, sample) != 0.f)
+                {
+                    std::cerr << "Silent input produced audio\n";
+                    return 1;
+                }
+    }
     audio.clear();
     audio.setSample(0, 0, .1f);
     for (int i = 0; i < 100; ++i)
@@ -97,28 +115,6 @@ int main(int argc, char **argv)
                 if (!std::isfinite(audio.getSample(c, n)))
                     return 1;
         audio.clear();
-    }
-    if (diagnostic)
-    {
-        audio.clear();
-        plugin->releaseResources();
-        plugin->prepareToPlay(48000, 512);
-        double phase = 0;
-        for (int block = 0; block < 8; ++block)
-        {
-            audio.clear();
-            plugin->processBlock(audio, midi);
-            for (int n = 0; n < 512; ++n)
-            {
-                float expected = float(std::sin(phase)) * std::pow(10.f, -18.f / 20);
-                if (std::abs(audio.getSample(0, n) - expected) > 1e-6 ||
-                    audio.getSample(0, n) != audio.getSample(1, n))
-                    return 1;
-                phase =
-                    std::fmod(phase + 2 * 3.141592653589793 * 440 / 48000, 2 * 3.141592653589793);
-            }
-        }
-        std::cout << "Diagnostic sine frequency, level, phase, silence input checked\n";
     }
     plugin->getParameters()[0]->setValueNotifyingHost(.73f);
     juce::MemoryBlock before, after;

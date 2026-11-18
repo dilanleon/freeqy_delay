@@ -82,19 +82,7 @@ struct CurveBanks
                            visibleLast, std::min(1.f, std::abs(offsetHz) / 1000.f));
         return sample(ch, type, shiftedIndex(index, offsetHz, sampleRate), percent);
     }
-    // Render the active bank morph into one curve snapshot.
-    void blend(float percent, Curves &result) const
-    {
-        const int active = std::clamp(count, 1, 4);
-        const float position = std::clamp(percent, 0.f, 100.f) * (active - 1) / 100.f;
-        const int first = int(position), second = std::min(first + 1, active - 1);
-        const float fraction = position - first;
-        for (int ch = 0; ch < 2; ++ch)
-            for (int type = 0; type < 3; ++type)
-                for (int k = 0; k < B; ++k)
-                    result.values[ch][type][k] = banks[first].values[ch][type][k] * (1 - fraction) +
-                                                 banks[second].values[ch][type][k] * fraction;
-    }
+
 };
 // Curve storage and analyzer resolution stay fixed for preset compatibility.
 constexpr int MaxFft = 2048, Latency = MaxFft;
@@ -122,13 +110,6 @@ class Engine
     {
         settings = value;
     }
-    // Install a legacy single-bank curve snapshot for independent DSP use.
-    void setCurves(const Curves &value)
-    {
-        for (auto &bank : banks.banks)
-            bank = value;
-        banks.count = 1;
-    }
     // Install a complete bank snapshot without allocation.
     void setBanks(const CurveBanks &value)
     {
@@ -136,12 +117,6 @@ class Engine
     }
     // Process audio with fixed latency and optional bypass.
     void process(float *const *, int, bool bypass = false);
-    // Compute wrapped opposite-direction morph positions.
-    static std::array<float, 2> stereoPositions(float center, float depth, float movement)
-    {
-        auto wrap = [](float value) { return value - 100.f * std::floor(value / 100.f); };
-        return {wrap(center + depth * movement), wrap(center - depth * movement)};
-    }
     // Return the smoothed live morph positions for both channels.
     std::array<float, 2> morphPositions() const
     {

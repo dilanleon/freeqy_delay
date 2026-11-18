@@ -95,7 +95,11 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     // Copy GUI point metadata under the model lock.
     spectral::PointCurves getPointCurves();
     // Replace GUI point metadata without touching DSP state.
-    void setPointCurves(const spectral::PointCurves &);
+    void setPointCurves(const spectral::PointCurves &, double sourceRate = 0);
+    // Return the sample rate associated with point metadata.
+    double pointSampleRate();
+    // Identify host recalls or rate changes that invalidate editor history.
+    uint64_t editorRevision() const { return modelRevision.load(std::memory_order_acquire); }
     std::atomic<bool> pointMode{false};
     // Request a transient clear and invalidate visual frames.
     void requestClearBuffer()
@@ -141,6 +145,9 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     std::mutex modelMutex;
     spectral::CurveBanks model;
     spectral::PointCurves pointModel;
+    double pointRate = 48000;
+    std::atomic<double> preparedRate{0};
+    std::atomic<uint64_t> modelRevision{0};
     juce::AbstractFifo curveFifo{4}, spectrumFifo{128};
     std::array<spectral::CurveBanks, 4> curveQueue;
     std::vector<Spectrum> spectrumQueue = std::vector<Spectrum>(128);
@@ -155,7 +162,6 @@ class Processor final : public juce::AudioProcessor, private juce::Timer
     bool spectrumReady = false;
     int64_t meterSamples = 0;
     double meterSampleRate = 48000;
-    double sinePhase = 0;
     // Bridge host buffers, control snapshots, DSP, and analyzer transfer.
     void process(juce::AudioBuffer<float> &, bool);
     // Feed pre-effect samples to the stereo input analyzer.

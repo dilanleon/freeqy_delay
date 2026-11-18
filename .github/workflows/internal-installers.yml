@@ -1,0 +1,90 @@
+name: Internal installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    if: ${{ github.event.repository.private }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal Release
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64' -DSPECTRAL_BUILD_AU=ON -DSPECTRAL_BUILD_CLAP=ON
+          cmake --build build --parallel 3
+          ctest --test-dir build -C Release --output-on-failure
+      - name: Build and exercise the unsigned installer
+        run: |
+          cmake --build build --target InstallerPayload --config Release
+          bash packaging/macos/package.sh build/installer-payload/Release dist
+          bash packaging/macos/test-install.sh dist/FREEQY-DELAY-macOS.pkg build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macOS-installer
+          path: dist/FREEQY-DELAY-macOS.pkg
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    if: ${{ github.event.repository.private }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build x64 Release
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 -DSPECTRAL_BUILD_CLAP=ON '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>'
+          cmake --build build --config Release --parallel 3
+          ctest --test-dir build -C Release --output-on-failure
+      - name: Build and exercise the installer
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --build build --config Release --target InstallerPayload
+          ./packaging/windows/package.ps1 -Payload build/installer-payload/Release -Output dist
+          ./packaging/windows/test-install.ps1 -Installer dist/FREEQY-DELAY-Windows-x64-Setup.exe -BuildDir build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-x64-installer
+          path: dist/FREEQY-DELAY-Windows-x64-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    if: ${{ github.event.repository.private }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install JUCE build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev \
+            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxi-dev libwebkit2gtk-4.1-dev libegl-dev \
+            libglu1-mesa-dev mesa-common-dev xvfb xauth
+      - name: Build x86-64 Release
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSPECTRAL_BUILD_CLAP=ON
+          cmake --build build --parallel 3
+          xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+      - name: Build and exercise the installer
+        run: |
+          cmake --build build --target InstallerPayload --config Release
+          bash packaging/linux/package.sh build/installer-payload/Release dist
+          tar -xzf dist/FREEQY-DELAY-Linux-x86_64.tar.gz -C dist
+          bash packaging/linux/test-install.sh "$PWD/dist/FREEQY-DELAY-Linux-x86_64" "$PWD/build"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Linux-x86_64-installer
+          path: dist/FREEQY-DELAY-Linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14

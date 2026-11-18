@@ -43,7 +43,7 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     std::array<juce::Label, 6> labels;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     juce::ComboBox stftSize, scrollSpeed;
-    juce::TextButton presetMenu{"Presets"};
+    juce::TextButton presetMenu{"Presets"}, undoButton{"Undo"}, redoButton{"Redo"};
     std::unique_ptr<juce::FileChooser> presetChooser;
     ChoiceStepper resolutionControl, scrollControl;
     juce::TextButton drawMode{"Draw"}, pointsMode{"Points"};
@@ -79,6 +79,11 @@ class Editor final : public juce::AudioProcessorEditor, private juce::Timer
     spectral::Curves drawing;
     Snapshot beforeBanks;
     std::vector<Snapshot> undoStack, redoStack;
+    uint64_t seenRevision = 0;
+    // Discard history and gestures invalidated by a host recall or rate change.
+    void syncRevision();
+    // Reflect history availability in the visible controls.
+    void updateHistoryButtons();
     juce::Rectangle<int> plot, curvePanel, delayPanel, shiftPanel, gainPanel, morphPanel, mixPanel,
         toolbar, bankTools;
     juce::TextButton clearBuffer{"Clear Buffer"};

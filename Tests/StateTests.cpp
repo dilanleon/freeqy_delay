@@ -22,7 +22,7 @@ int main(int argc, char **argv)
             auto &presetProcessor = *presetOwner;
             auto editor = std::unique_ptr<juce::AudioProcessorEditor>(presetProcessor.createEditorAndMakeActive());
             auto *presetEditor = dynamic_cast<Editor *>(editor.get());
-            juce::TextButton *menu = nullptr;
+            juce::TextButton *menu = nullptr, *undo = nullptr, *redo = nullptr;
             juce::Slider *shiftDepth = nullptr;
             juce::Slider *morphDepthControl = nullptr;
             juce::Slider *morphControl = nullptr;
@@ -34,6 +34,8 @@ int main(int argc, char **argv)
             for (auto *child : editor->getChildren())
             {
                 if (child->getName() == "Preset menu") menu = dynamic_cast<juce::TextButton *>(child);
+                if (child->getName() == "Undo") undo = dynamic_cast<juce::TextButton *>(child);
+                if (child->getName() == "Redo") redo = dynamic_cast<juce::TextButton *>(child);
                 if (child->getName() == "shiftHz") shiftDepth = dynamic_cast<juce::Slider *>(child);
                 if (child->getName() == "morphDepth") morphDepthControl = dynamic_cast<juce::Slider *>(child);
                 if (child->getName() == "curveMorph") morphControl = dynamic_cast<juce::Slider *>(child);
@@ -53,6 +55,10 @@ int main(int argc, char **argv)
                   "curve shift host automation mapping changed");
             check(presetEditor && menu && menu->getButtonText() == "Presets",
                   "categorized preset menu button");
+            check(undo && redo && undo->isVisible() && redo->isVisible() &&
+                      !undo->isEnabled() && !redo->isEnabled() &&
+                      !undo->getBounds().intersects(menu->getBounds()) &&
+                      !redo->getBounds().intersects(menu->getBounds()), "visible history controls");
             // Rotary Slider bounds include a 33 px value box below the body.
             auto rotaryCentre = [](const juce::Slider &slider)
             { return slider.getY() + (slider.getHeight() - 33) / 2; };
@@ -113,7 +119,8 @@ int main(int argc, char **argv)
             presetProcessor.editorBeingDeleted(editor.get());
         }
         {
-            Processor bankPresetProcessor;
+            auto bankPresetProcessorStorage = std::make_unique<Processor>();
+            auto &bankPresetProcessor = *bankPresetProcessorStorage;
             auto editor = std::unique_ptr<juce::AudioProcessorEditor>(bankPresetProcessor.createEditorAndMakeActive());
             auto *presetEditor = dynamic_cast<Editor *>(editor.get());
             check(presetEditor != nullptr, "bank preset editor");
@@ -152,7 +159,8 @@ int main(int argc, char **argv)
             bankPresetProcessor.editorBeingDeleted(editor.get());
         }
         {
-            Processor saved;
+            auto savedStorage = std::make_unique<Processor>();
+            auto &saved = *savedStorage;
             const auto folder = juce::File::getSpecialLocation(juce::File::tempDirectory);
             const auto pluginFile = folder.getNonexistentChildFile("freeqy-plugin-preset-test", ".freeqy");
             const auto bankFile = folder.getNonexistentChildFile("freeqy-bank-preset-test", ".freeqybank");
@@ -192,6 +200,45 @@ int main(int argc, char **argv)
                       saved.getPointCurves().banks[1][0][0].count == 2 &&
                       saved.state.getRawParameterValue("mix")->load() == mixBeforeBank,
                   "selected-bank load changed global state or missed saved data");
+            juce::MemoryBlock corruptBytes;
+            check(pluginFile.loadFileAsData(corruptBytes), "read plug-in preset");
+            auto corrupt = juce::ValueTree::readFromData(corruptBytes.getData(), corruptBytes.getSize());
+            auto corruptBanks = corrupt.getProperty("banks");
+            auto badBanks = *corruptBanks.getBinaryData();
+            const float invalid = std::numeric_limits<float>::quiet_NaN();
+            std::memcpy(badBanks.getData(), &invalid, sizeof(invalid));
+            corrupt.setProperty("banks", badBanks, nullptr);
+            juce::MemoryOutputStream corruptOutput;
+            corrupt.writeToStream(corruptOutput);
+            check(badFile.replaceWithData(corruptOutput.getData(), corruptOutput.getDataSize()) &&
+                      spectral::presets::loadPlugin(saved, badFile).failed() &&
+                      saved.getBanks().banks[1].values[0][0][17] == .91f,
+                  "invalid plug-in preset changed state");
+            auto checkRejected = [&](juce::ValueTree candidate)
+            {
+                juce::MemoryOutputStream output;
+                candidate.writeToStream(output);
+                return badFile.replaceWithData(output.getData(), output.getDataSize()) &&
+                       spectral::presets::loadPlugin(saved, badFile).failed() &&
+                       saved.getBanks().banks[1].values[0][0][17] == .91f;
+            };
+            auto missingParameter = juce::ValueTree::readFromData(corruptBytes.getData(), corruptBytes.getSize());
+            missingParameter.removeChild(0, nullptr);
+            check(checkRejected(missingParameter), "incomplete parameter set accepted");
+            auto badParameter = juce::ValueTree::readFromData(corruptBytes.getData(), corruptBytes.getSize());
+            badParameter.getChild(0).setProperty("value", "invalid", nullptr);
+            check(checkRejected(badParameter), "nonnumeric parameter accepted");
+            auto badEditor = juce::ValueTree::readFromData(corruptBytes.getData(), corruptBytes.getSize());
+            badEditor.setProperty("bankCount", 99, nullptr);
+            check(checkRejected(badEditor), "invalid editor setting accepted");
+            auto badPointTree = juce::ValueTree::readFromData(corruptBytes.getData(), corruptBytes.getSize());
+            auto badPointProperty = badPointTree.getProperty("pointCurves");
+            auto badPointBytes = *badPointProperty.getBinaryData();
+            spectral::PointCurves invalidPoints;
+            invalidPoints.banks[0][0][0].count = 100;
+            std::memcpy(badPointBytes.getData(), &invalidPoints, sizeof(invalidPoints));
+            badPointTree.setProperty("pointCurves", badPointBytes, nullptr);
+            check(checkRejected(badPointTree), "invalid point data accepted");
             check(spectral::presets::loadBank(saved, pluginFile).failed() &&
                       spectral::presets::loadPlugin(saved, bankFile).failed(),
                   "preset kinds should not be interchangeable");
@@ -212,6 +259,82 @@ int main(int argc, char **argv)
             pluginFile.deleteFile();
             bankFile.deleteFile();
             badFile.deleteFile();
+        }
+        {
+            auto ownerStorage = std::make_unique<Processor>();
+            auto &owner = *ownerStorage;
+            owner.prepareToPlay(48000, 512);
+            auto editor = std::unique_ptr<juce::AudioProcessorEditor>(owner.createEditorAndMakeActive());
+            auto *typed = dynamic_cast<Editor *>(editor.get());
+            juce::TextButton *undo = nullptr, *redo = nullptr;
+            for (auto *child : editor->getChildren())
+            {
+                if (child->getName() == "Undo") undo = dynamic_cast<juce::TextButton *>(child);
+                if (child->getName() == "Redo") redo = dynamic_cast<juce::TextButton *>(child);
+            }
+            auto banks = owner.getBanks();
+            banks.banks[0].values[0][0][10] = .8f;
+            owner.updateBanks(banks);
+            typed->loadSelectedBankDefaultPreset();
+            check(undo && undo->isEnabled(), "undo button not enabled after edit");
+            undo->onClick();
+            check(owner.getBanks().banks[0].values[0][0][10] == .8f && redo->isEnabled(),
+                  "undo button did not restore edit");
+            redo->onClick();
+            check(owner.getBanks().banks[0].values[0][0][10] == .25f, "redo button did not restore edit");
+            juce::MemoryBlock recalled;
+            owner.getStateInformation(recalled);
+            banks = owner.getBanks();
+            banks.banks[0].values[0][0][10] = .8f;
+            owner.updateBanks(banks);
+            typed->loadSelectedBankDefaultPreset();
+            owner.setStateInformation(recalled.getData(), int(recalled.getSize()));
+            typed->keyPressed(juce::KeyPress('Z', juce::ModifierKeys::commandModifier, 0));
+            check(owner.getBanks().banks[0].values[0][0][10] == .25f, "host recall left stale undo history");
+            owner.editorBeingDeleted(editor.get());
+        }
+        {
+            auto sourceStorage = std::make_unique<Processor>();
+            auto &source = *sourceStorage;
+            source.prepareToPlay(48000, 512);
+            auto points = source.getPointCurves();
+            points.banks[0][0][0].count = 2;
+            points.banks[0][0][0].points[0] = {0, .2f, 0};
+            points.banks[0][0][0].points[1] = {1, .8f, 0};
+            source.setPointCurves(points);
+            auto banks = source.getBanks();
+            banks.banks[0].values[0][0][40] = .77f;
+            source.updateBanks(banks);
+            juce::MemoryBlock bytes;
+            source.getStateInformation(bytes);
+            auto beforeStorage = std::make_unique<Processor>();
+            auto &beforePrepare = *beforeStorage;
+            beforePrepare.setStateInformation(bytes.getData(), int(bytes.getSize()));
+            beforePrepare.prepareToPlay(96000, 512);
+            check(beforePrepare.getPointCurves().banks[0][0][0].count == 0 &&
+                      beforePrepare.getBanks().banks[0].values[0][0][40] == .77f,
+                  "rate change before prepare did not invalidate points only");
+            auto afterStorage = std::make_unique<Processor>();
+            auto &afterPrepare = *afterStorage;
+            afterPrepare.prepareToPlay(96000, 512);
+            afterPrepare.setStateInformation(bytes.getData(), int(bytes.getSize()));
+            check(afterPrepare.getPointCurves().banks[0][0][0].count == 0 &&
+                      afterPrepare.getBanks().banks[0].values[0][0][40] == .77f,
+                  "rate change after prepare did not invalidate points only");
+            auto sameStorage = std::make_unique<Processor>();
+            auto &sameRate = *sameStorage;
+            sameRate.prepareToPlay(48000, 512);
+            sameRate.setStateInformation(bytes.getData(), int(bytes.getSize()));
+            check(sameRate.getPointCurves().banks[0][0][0].count == 2,
+                  "same-rate recall lost point metadata");
+            const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                  .getNonexistentChildFile("freeqy-rate", ".freeqybank");
+            check(spectral::presets::saveBank(source, file).wasOk() &&
+                      spectral::presets::loadBank(afterPrepare, file).wasOk() &&
+                      afterPrepare.getPointCurves().banks[0][0][0].count == 0 &&
+                      afterPrepare.getBanks().banks[0].values[0][0][40] == .77f,
+                  "cross-rate bank preset did not retain grid and invalidate points");
+            file.deleteFile();
         }
         spectral::PointCurve pointCurve;
         pointCurve.count = 2;
@@ -381,9 +504,9 @@ int main(int argc, char **argv)
             check(history.atAge(0)[0][43] == 0 && history.atAge(6)[0][43] == 0,
                   "speed change clears incompatible visual time scale");
         }
-        if constexpr (!SPECTRAL_DIAGNOSTIC)
         {
-            Processor probe;
+            auto probeStorage = std::make_unique<Processor>();
+            auto &probe = *probeStorage;
             auto set = [&](const char *id, float value)
             {
                 auto *parameter = probe.state.getParameter(id);
@@ -459,7 +582,8 @@ int main(int argc, char **argv)
                   "dual spectra do not separate incoming silence from stored tail");
         }
         {
-            Processor probe;
+            auto probeStorage = std::make_unique<Processor>();
+            auto &probe = *probeStorage;
             probe.prepareToPlay(48000, 8192);
             juce::AudioBuffer<float> block(2, 8192);
             block.clear();
@@ -516,7 +640,8 @@ int main(int argc, char **argv)
                   "clear retained queued pre-clear analyzer frames");
         }
         {
-            Processor gestureProbe;
+            auto gestureProbeStorage = std::make_unique<Processor>();
+            auto &gestureProbe = *gestureProbeStorage;
             gestureProbe.prepareToPlay(48000, 512);
             std::unique_ptr<juce::AudioProcessorEditor> editor(
                 gestureProbe.createEditorAndMakeActive());
@@ -539,7 +664,8 @@ int main(int argc, char **argv)
                   "automated STFT change committed a partial drawing gesture");
             gestureProbe.editorBeingDeleted(editor.get());
         }
-        Processor p;
+        auto pStorage = std::make_unique<Processor>();
+        auto &p = *pStorage;
         auto banks = p.getBanks();
         banks.count = 3;
         for (int b = 0; b < 4; ++b)
@@ -637,7 +763,6 @@ int main(int argc, char **argv)
             if (argc > 3)
                 editor->setSize(juce::String(argv[2]).getIntValue(),
                                 juce::String(argv[3]).getIntValue());
-            if constexpr (!SPECTRAL_DIAGNOSTIC)
             {
                 auto *view = dynamic_cast<Editor *>(editor.get());
                 check(view != nullptr, "editor preview type");
@@ -713,7 +838,7 @@ int main(int argc, char **argv)
             check(p.getBanks().count == 3 && !button("Bank 4")->isEnabled() &&
                       p.getBanks().banks[3].values[1][0][123] == retained,
                   "remove bank callback must retain stored curves");
-            check(button("Clear Buffer") && !button("Undo") && !button("Redo") && !button("L > R"),
+            check(button("Clear Buffer") && button("Undo") && button("Redo") && !button("L > R"),
                   "sketch toolbar controls");
             p.processBlock(meterInput, meterMidi);
             button("Clear Buffer")->onClick();
@@ -745,9 +870,17 @@ int main(int argc, char **argv)
         juce::MemoryBlock afterClear;
         p.getStateInformation(afterClear);
         check(bytes == afterClear, "clear changed stored settings");
-        Processor restored;
+        auto restoredStorage = std::make_unique<Processor>();
+        auto &restored = *restoredStorage;
         restored.setStateInformation(bytes.getData(), int(bytes.getSize()));
         check(restored.spectrogramSpeed == 0, "spectrogram speed state recall");
+        auto parameterOnly = juce::ValueTree::readFromData(bytes.getData(), bytes.getSize());
+        parameterOnly.removeProperty("spectrogramSpeed", nullptr);
+        juce::MemoryOutputStream parameterOnlyBytes;
+        parameterOnly.writeToStream(parameterOnlyBytes);
+        restored.spectrogramSpeed = 1;
+        restored.setStateInformation(parameterOnlyBytes.getData(), int(parameterOnlyBytes.getDataSize()));
+        check(restored.spectrogramSpeed == 1, "parameter-only host state reset scroll choice");
         const auto recalledPoints = restored.getPointCurves();
         check(restored.pointMode && recalledPoints.banks[2][1][0].count == 2 &&
               recalledPoints.banks[2][1][0].points[0].shape == -1, "point state recall");

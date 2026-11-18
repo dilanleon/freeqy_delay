@@ -1,7 +1,7 @@
 # FREEQY DELAY
 
-FREEQY DELAY is a C++20 JUCE spectral delay for macOS. It builds as VST3 and Standalone,
-with native CLAP and AAX Native as opt-in formats. Station Sound is the manufacturer.
+FREEQY DELAY is a C++20 JUCE spectral delay by Station Sound. Internal installers
+offer VST3 and native CLAP on macOS, Windows, and Linux, plus Audio Units on macOS.
 
 Each stereo channel has independent **Delay**, **Feedback**, and **Level** curves across
 a logarithmic 20 Hz–20 kHz display. Up to four banks hold complete sets of curves. Morph
@@ -9,7 +9,9 @@ blends adjacent active banks without changing the bank selected for editing.
 
 ## Build and test
 
-Requirements: macOS, Apple command line developer tools, and CMake 3.22 or newer.
+Use CMake 3.22 or newer and a native C++20 toolchain. The commands below use macOS
+with Apple command line developer tools. See [native installer builds](docs/build-and-validation.md#internal-installers)
+for the Windows and Linux toolchains and CI workflow.
 `CMakeLists.txt` pins JUCE 9.0.5 by commit. Set `JUCE_DIR` to a local JUCE checkout to
 avoid a fetch.
 
@@ -37,7 +39,7 @@ target. A dim line shows the other channel when its selected curve differs.
 
 | Area | Controls | What they do |
 | --- | --- | --- |
-| Top bar | Presets; Draw / Points | Save or load a plug-in or selected-bank preset, or choose how to edit a curve. |
+| Top bar | Presets; Undo / Redo; Draw / Points | Save or load a plug-in or selected-bank preset, undo or redo edits, or choose how to edit a curve. |
 | Above graph | Bank 1–4; Banks − / + | Select an edit bank or change the active count. Disabled banks retain their shapes. |
 | Below graph | Delay / Level / Feedback; Scroll − / +; Resolution − / +; Link; L/R; Reset; Clear Buffer | Select a curve and channel, adjust the display and STFT, link edits, reset the selected curve, or clear the delay tail. |
 | Bottom strip | Morph / Depth / Rate and direction; Max Delay; Curve Shift Depth / Rate; Wet; IN / OUT | Set bank morph, delay scale, stereo curve movement, mix, and trims. |
@@ -49,7 +51,7 @@ existing drawn curve into point anchors. Point coordinates follow the logarithmi
 display axis; adaptive sampling prioritizes narrow peaks within the 64-point limit.
 **Link** mirrors edits to the other channel; enabling it copies the
 selected channel's curves. Command-Z undoes one drawing gesture, reset, or bank-count
-change; Shift-Command-Z redoes it. There are no visible undo/redo buttons.
+change; Shift-Command-Z redoes it. Undo and Redo buttons provide the same actions. Host state recall clears edit history.
 
 **Presets** separates **Plug-in** presets from **Selected Bank** presets. The Default plug-in
 preset sets all curves in all banks to Delay 25%, Feedback 35%, and Level 100%, enables one
@@ -124,7 +126,9 @@ captured before the clear request.
 
 The current state schema is version 4. It saves four stereo curve banks, the active bank
 count, edit selection, point-mode data, and display speed. Delay history and visual
-history are not serialized. Only version 4 is accepted; earlier versions are ignored
+history are not serialized. Point metadata records its sample rate; when a state or bank preset
+uses a different sample rate, points are regenerated from the saved grid on the next point edit.
+Only version 4 is accepted; earlier versions are ignored
 without changing the loaded state. Retired copy/chorus parameter IDs are not reused. The
 internal APVTS root remains `SpectralDelay` for saved-state compatibility.
 
@@ -135,6 +139,7 @@ internal APVTS root remains `SpectralDelay` for saved-state compatibility.
 | VST3 | Built by default | `FreeqyDelay_artefacts/Release/VST3/FREEQY DELAY.vst3` |
 | Standalone | Built by default with CMake | `FreeqyDelay_artefacts/Release/Standalone/FREEQY DELAY.app` |
 | Native CLAP | `make clap` or `-DSPECTRAL_BUILD_CLAP=ON` | `FreeqyDelay_artefacts/Release/CLAP/FREEQY DELAY.clap` |
+| Audio Units v2 | `-DSPECTRAL_BUILD_AU=ON` on macOS | `FreeqyDelay_artefacts/Release/AU/FREEQY DELAY.component` |
 | AAX Native | `make aax AAX=1` or `-DSPECTRAL_BUILD_AAX=ON` | `FreeqyDelay_artefacts/Release/AAX/FREEQY DELAY.aaxplugin` |
 
 Native CLAP uses the `clap-juce-extensions` commit pinned in `CMakeLists.txt`. Supply
@@ -143,7 +148,7 @@ clears quarantine from its local bundle after packaging. The CLAP ID is
 `com.stationsound.freeqydelay`; its parameter IDs and versioned state payload are shared
 with VST3.
 
-The Makefile installs only when explicitly requested:
+The macOS Makefile installs only when explicitly requested:
 
 ```sh
 make install-vst3
@@ -182,7 +187,7 @@ and relevant checks:
 
 | Area | Implementation | Tests and checks |
 | --- | --- | --- |
-| Build, formats, install | `CMakeLists.txt`, `Makefile` | `Tests/HostCheck.cpp`, `Tests/ClapCheck.cpp` |
+| Build, formats, install | `CMakeLists.txt`, `Makefile`, `packaging/` | `Tests/HostCheck.cpp`, `Tests/ClapCheck.cpp`, installer smoke tests |
 | STFT, delay history, feedback, morph, curve shift, latency | `Source/Engine.h`, `Source/Engine.cpp` | `Tests/Main.cpp` |
 | Host parameters, state loading, analyzer queues | `Source/PluginProcessor.h`, `Source/PluginProcessor.cpp` | `Tests/StateTests.cpp`, format checks |
 | Preset file validation and persistence | `Source/PresetFiles.h`, `Source/PresetFiles.cpp` | `Tests/StateTests.cpp` |
@@ -197,7 +202,7 @@ span the analyzers, bounded processor queue, GUI history, and rasterization. Kee
 allocation and locks off the audio path. Search a parameter ID or symbol across `Source`
 and `Tests` before changing a cross-file behavior.
 
-## Validation status and diagnostic
+## Validation status
 
 `ctest` runs DSP, VST3 host, and state/UI checks in a normal CMake tree. A CLAP-enabled
 tree adds `clap_host`. The DSP suite covers all eight STFT sizes, 44.1–192 kHz,
@@ -207,14 +212,4 @@ version rejection, display mapping, analyzer queues, editor controls, and render
 automated checks do not establish commercial DAW listening acceptance. AAX Pro Tools
 loading remains untested.
 
-For the development FFT/sine route, configure a separate tree:
-
-```sh
-cmake -S . -B build-diagnostic -DCMAKE_BUILD_TYPE=Debug -DSPECTRAL_DIAGNOSTIC=ON
-cmake --build build-diagnostic -j 4
-ctest --test-dir build-diagnostic --output-on-failure
-```
-
-That route retains input FFT metering, replaces normal output with a 440 Hz, −18 dBFS
-sine, and reports zero latency. Normal builds have no sine route. Local bundles are
-ad-hoc signed; distribution signing, notarization, and installers remain separate work.
+Local bundles are ad-hoc signed; distribution signing, notarization, and installers remain separate work.

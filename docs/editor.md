@@ -6,10 +6,11 @@ Authoritative layout, interaction, drawing, point-mode, and preset requirements.
 
 Match the user sketch: four full-width bank tabs above the enlarged graph, Banks +/- at right.
 Below the graph: Delay / Level / Feedback, Scroll +/-, Resolution +/-, link icon,
-L/R, Reset, Clear Buffer. No visible copy or undo/redo controls.
+L/R, Reset, Clear Buffer. No visible copy controls.
 The link toggle displays two disconnected circles when off and overlapping connected circles when on.
 The top-bar Presets menu separates Plug-in and Selected Bank categories. Each submenu has
-Default, Save..., and Load... actions; the latter two use a native file dialog.
+Default, Save..., and Load... actions; the latter two use a native file dialog. Undo and Redo
+buttons sit beside Presets and reflect the available history.
 Plug-in Default resets curve values (Delay 25%, Feedback 35%, Level 100%), enables one active
 bank, and sets Max Delay 1 s, Resolution 1024 samples, Wet 50%, and other parameters to zero.
 Selected Bank Default sets only that bank's curves to those curve values; it preserves global
@@ -27,6 +28,7 @@ Max Delay displays milliseconds below 1000 ms and seconds at/above 1 s. Bare typ
 the currently displayed unit; explicit `ms` or `s` suffixes override it.
 Rotary controls use the EditorStyle's layered recess, bevel and shaded cap.
 Undo/redo remains available with Command-Z / Shift-Command-Z (one drawing gesture).
+Host state recall and sample-rate changes invalidate prior editor undo/redo snapshots.
 Morph targets use dashed caps; parameter values never interpolate visually between buckets.
 Drawing updates whole bucket cells on the 1025-point saved grid, with undo/link.
 Point mode stores per-bank/channel/parameter points and segment curvature as optional v4 editor

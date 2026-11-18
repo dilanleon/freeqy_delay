@@ -50,6 +50,14 @@ Curves transparent()
     }
     return c;
 }
+// Supply a single active bank through the production bank interface.
+void setTestCurves(Engine &engine, const Curves &curves)
+{
+    CurveBanks banks;
+    banks.count = 1;
+    banks.banks[0] = curves;
+    engine.setBanks(banks);
+}
 // Exercise irregular host blocks and reject allocations inside processing.
 void run(Engine &engine, std::vector<float> &left, std::vector<float> &right, int channels = 2,
          bool bypass = false)
@@ -99,12 +107,10 @@ int main()
             banks.count = count;
             for (float percent : {0.f, 100.f / 3, 50.f, 200.f / 3, 100.f})
             {
-                Curves output;
-                banks.blend(percent, output);
-                for (auto &ch : output.values)
-                    for (auto &curve : ch)
-                        for (float v : curve)
-                            require(std::abs(v - percent / 100 * (count - 1) / 4) < 1e-6,
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int type = 0; type < 3; ++type)
+                        for (int k = 0; k < B; ++k)
+                            require(std::abs(banks.sample(ch, type, float(k), percent) - percent / 100 * (count - 1) / 4) < 1e-6,
                                     "bank blend");
             }
         }
@@ -118,7 +124,7 @@ int main()
                     settings.fftSize = size;
                     auto curves = transparent();
                     engine.setSettings(settings);
-                    engine.setCurves(curves);
+                    setTestCurves(engine, curves);
                     engine.prepare(sr, channels);
                     std::vector<float> source(8192), left, right;
                     std::mt19937 random(42);
@@ -133,7 +139,7 @@ int main()
                     int delay = 3 * size / 8;
                     for (auto &ch : curves.values)
                         ch[0].fill(float(delay) / (float(sr)));
-                    engine.setCurves(curves);
+                    setTestCurves(engine, curves);
                     engine.reset();
                     left = right = source;
                     run(engine, left, right, channels);
@@ -142,7 +148,7 @@ int main()
                     const int fractionalDelay = 3 * size / 16;
                     for (auto &ch : curves.values)
                         ch[0].fill(float(fractionalDelay) / float(sr));
-                    engine.setCurves(curves);
+                    setTestCurves(engine, curves);
                     engine.reset();
                     for (int n = 0; n < int(source.size()); ++n)
                         source[n] = float(.1 * std::sin(tau * 3 * n / size));
@@ -166,7 +172,7 @@ int main()
                 for (int k = 1; k <= 3; ++k)
                     ch[0][k * (B - 1) / (size / 2)] = float(delay) / 48000;
             engine.setSettings(settings);
-            engine.setCurves(curves);
+            setTestCurves(engine, curves);
             engine.prepare(48000, 2);
             std::vector<float> input(12000), left, right;
             for (int n = 0; n < int(input.size()); ++n)
@@ -199,7 +205,7 @@ int main()
                 ch[1].fill(.5f);
             }
             e.setSettings(s);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.prepare(48000, 2);
             std::vector<float> left(16000), right = left;
             left[0] = 1;
@@ -209,7 +215,7 @@ int main()
             require(std::abs(left[Latency + 3072] - .25f) < 1e-5, "second decay");
             for (auto &ch : c.values)
                 ch[1].fill(1);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.reset();
             left.assign(left.size(), 0);
             right = left;
@@ -220,7 +226,7 @@ int main()
                     "100 percent feedback decays");
             for (auto &ch : c.values)
                 ch[2].fill(0);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.reset();
             left.assign(left.size(), .1f);
             right = left;
@@ -244,7 +250,7 @@ int main()
                 s.shiftHz = 1000;
                 s.shiftRateHz = rate;
                 e.setSettings(s);
-                e.setCurves(transparent());
+                setTestCurves(e, transparent());
                 e.prepare(sr, 2);
                 std::vector<float> source(48000), left, right;
                 for (int n = 0; n < int(source.size()); ++n)
@@ -298,7 +304,7 @@ int main()
             s.morphDepth = 40;
             s.morphRateHz = 1;
             e.setSettings(s);
-            e.setCurves(transparent());
+            setTestCurves(e, transparent());
             e.prepare(48000, 2);
             std::vector<float> left(6576), right(left.size());
             run(e, left, right);
@@ -400,7 +406,7 @@ int main()
                     ch[2][k] = std::abs(hz - (1500 - offset)) < 200 ? 1.f : 0.f;
                 }
             e.setSettings(s);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.prepare(48000, 2);
             std::vector<float> left(48000), right;
             for (int n = 0; n < int(left.size()); ++n)
@@ -436,7 +442,7 @@ int main()
                         ch[1][k] = feedback;
                     }
             e.setSettings(s);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.prepare(48000, 2);
             std::vector<float> left(48000), right;
             for (int n = 0; n < int(left.size()); ++n)
@@ -484,18 +490,26 @@ int main()
         }
         // Stereo morph uses opposite bounded bank positions, independently of curve shifting.
         {
-            for (float center : {0.f, 50.f, 100.f})
-                for (float movement : {-1.f, 0.f, 1.f})
-                {
-                    auto positions = Engine::stereoPositions(center, 100, movement);
-                    require(positions[0] >= 0 && positions[0] <= 100 && positions[1] >= 0 &&
-                                positions[1] <= 100,
-                            "stereo morph bounds");
-                }
-            auto upper = Engine::stereoPositions(95, 10, 1),
-                 lower = Engine::stereoPositions(5, 10, 1);
-            require(upper[0] == 5 && upper[1] == 85 && lower[0] == 15 && lower[1] == 95,
-                    "stereo morph does not wrap");
+            Engine positionEngine;
+            Settings positionSettings;
+            positionSettings.stereoMorph = true;
+            positionSettings.morphRateHz = 0;
+            positionSettings.morphDepth = 10;
+            for (float center : {5.f, 95.f})
+            {
+                positionSettings.morphPercent = center;
+                positionEngine.setSettings(positionSettings);
+                positionEngine.prepare(48000, 2);
+                const auto positions = positionEngine.morphPositions();
+                require(positions[0] == (center == 5 ? 15 : 5) &&
+                            positions[1] == (center == 5 ? 95 : 85), "stereo morph does not wrap");
+            }
+            positionSettings.morphPercent = 100;
+            positionSettings.morphDepth = 0;
+            positionEngine.setSettings(positionSettings);
+            positionEngine.reset();
+            require(positionEngine.morphPositions()[0] == 100 && positionEngine.morphPositions()[1] == 100,
+                    "zero-depth endpoint morph");
             CurveBanks banks;
             for (int b = 0; b < 4; ++b)
             {
@@ -614,7 +628,7 @@ int main()
                 ch[1].fill(1.f);
             }
             e.setSettings(s);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.prepare(sr, 2);
             std::vector<float> left(size_t(sr * .15), .02f), right = left;
             run(e, left, right);
@@ -668,7 +682,7 @@ int main()
             for (auto &ch : c.values)
                 ch[0].fill(float(delay) / 441000);
             e.setSettings(s);
-            e.setCurves(c);
+            setTestCurves(e, c);
             e.prepare(44100, 1);
             std::vector<float> left(Latency + delay + second + 2048), right(left.size());
             left[0] = 1;

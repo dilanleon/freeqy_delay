@@ -1,6 +1,6 @@
 # Build and validation
 
-Authoritative dependency, format, install, diagnostic, and validation requirements.
+Authoritative dependency, format, install, and validation requirements.
 
 ## Build and formats
 
@@ -33,8 +33,39 @@ SDK 2.10.0; staged VST3 signature/host loading pass. AAX Pro Tools loading is un
 Seal the VST3 bundle after manifest generation; do not alter PACE-signed AAX bundles.
 WebCLAP needs a WASM CLAP adapter and browser UI; do not label the native macOS
 bundle as WebCLAP or claim a .wclap artifact until that separate target exists.
-SPECTRAL_DIAGNOSTIC=ON retains input FFT plus 440 Hz/-18 dBFS sine output.
-Diagnostic latency is zero; the sine route is absent from normal controls.
+
+## Internal installers
+
+Run **Internal installers** from the private repository's Actions tab. Each native
+job builds and tests Release and uploads its installer as a 14-day workflow artifact.
+The workflow skips packaging in a public repository. Only repository readers can
+download the internal artifacts. For current validation results, check the workflow run.
+
+| CI build | Release asset | Install destinations |
+| --- | --- | --- |
+| macOS 13+ target, universal arm64/x86_64 | `FREEQY-DELAY-macOS.pkg` | System `/Library/Audio/Plug-Ins/{VST3,CLAP,Components}` |
+| Windows 11 x64 target, Visual Studio 2022 and Inno Setup 6 | `FREEQY-DELAY-Windows-x64-Setup.exe` | System `%CommonProgramFiles%\VST3` and `%CommonProgramFiles%\CLAP` |
+| Ubuntu 24.04 baseline, x86-64, JUCE Linux dependencies | `FREEQY-DELAY-Linux-x86_64.tar.gz` | Per-user `~/.vst3` and `~/.clap` |
+
+Each installer lets the user select formats. Release builds keep the complete VST3
+bundle. Audio Units v2 is opt-in with `SPECTRAL_BUILD_AU=ON` and macOS-only. Linux
+users extract the archive and run `./install.sh` in a terminal as their own user.
+Use `--vst3`, `--clap`, or both for unattended Linux installations.
+
+For a local build, use the matching configure options and dependencies in
+`.github/workflows/internal-installers.yml`. Build `InstallerPayload` after the
+normal build and pass `build/installer-payload/Release` and an output directory to the
+platform's `package.sh` or `package.ps1`. The installer scripts in `packaging/` test
+one-format and default installs and verify that deselecting a format during an upgrade
+leaves its existing files in place. Run system installation tests only on disposable
+test systems. Linux tests use a temporary home. The suites run VST3 and CLAP host
+scans from installed paths and macOS also runs `auval -v aufx Frqy Dleo`.
+
+The internal macOS package is unsigned. Before public distribution, confirm the
+JUCE and project source licensing, clear private test artifacts, and add Developer ID
+signing for the plug-in bundles and installer followed by notarization and stapling.
+Create a draft release from the reviewed version tag with all three verified assets.
+Publish and check downloads signed out before merging the Station Website download links.
 
 ## Ownership and cross-file workflows
 
@@ -51,13 +82,14 @@ quarantine cleanup passes. Its staged smoke test scans, instantiates, processes,
 and round-trips state; commercial CLAP-host acceptance remains pending.
 FREEQY DELAY Release VST3 has a valid ad-hoc signature and its local quarantine attribute was cleared for host validation.
 Spectrogram speed/row spacing, timestamp delivery, bounded overflow, state recall, chronology, ring wrap, stereo switching, resize and clearing tests pass.
-Adaptive point conversion, STFT-change gesture cancellation, stalled-queue filtering and
+Adaptive point conversion, sample-rate-aware point recall, host-recall undo invalidation,
+STFT-change gesture cancellation, stalled-queue filtering and
 pre-clear frame rejection tests pass.
 Bucket boundary/hit-test, sample-rate-independent visible bounds, analyzer resampling,
 dual-source level/mute/tail metering and stereo anti-phase checks pass.
 Stereo morph modulation, disabled/single-bank cases and v4 recall pass.
 All eight sizes, smoothed zero-rate holds, curve-axis shift direction and pitch preservation,
-display-aware Max Delay parsing, queue resets, legacy version rejection and diagnostic sine pass.
+display-aware Max Delay parsing, queue resets, and legacy version rejection pass.
 Default/minimum editor renders at coarse/fine FFT sizes were visually inspected. Commercial DAW listening
 acceptance remains pending.
 
@@ -74,6 +106,6 @@ Check size changes/clearing without C++ heap allocation and with continuous dry.
 Check legacy version rejection, v4 recall, sanitization and exposed VST3 automation.
 Render editor at default/minimum sizes when layout changes; verify toolbar/control bounds and bank count buttons.
 Do not claim commercial-DAW acceptance or listening tests passed unless performed.
-Signing/notarization and installers are deferred; local Gatekeeper exceptions
-may be needed. Revalidate a copied plugin rather than assuming the build is used.
+Public macOS signing and notarization are deferred. Revalidate an installed plugin
+rather than assuming the build artifact is used.
 Update this file when DSP assumptions, interfaces or commands change.

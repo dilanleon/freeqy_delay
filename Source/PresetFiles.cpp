@@ -89,6 +89,51 @@ juce::Result loadPlugin(Processor &processor, const juce::File &file)
     if (!banks || banks->getSize() != sizeof(CurveBanks{}.banks) ||
         !points || points->getSize() != sizeof(PointCurves))
         return juce::Result::fail("Plug-in preset data is incomplete.");
+    auto numeric = [](const juce::var &value)
+    { return value.isInt() || value.isInt64() || value.isDouble() || value.isBool(); };
+    for (auto [name, low, high] : {std::tuple{"bankCount", 1, 4}, {"selectedBank", 0, 3},
+                                   {"curve", 0, 2}, {"channel", 0, 1},
+                                   {"spectrogramSpeed", 0, 3}})
+    {
+        const auto value = tree.getProperty(name);
+        if (!numeric(value) || !std::isfinite(double(value)) || double(value) < low ||
+            double(value) > high || double(value) != std::floor(double(value)))
+            return juce::Result::fail("Plug-in preset contains invalid editor settings.");
+    }
+    if (int(tree.getProperty("selectedBank")) >= int(tree.getProperty("bankCount")))
+        return juce::Result::fail("Plug-in preset selects an inactive bank.");
+    if (tree.hasProperty("pointSampleRate"))
+    {
+        const auto rate = tree.getProperty("pointSampleRate");
+        if (!numeric(rate) || !std::isfinite(double(rate)) || double(rate) <= 0)
+            return juce::Result::fail("Plug-in preset contains an invalid point sample rate.");
+    }
+    CurveBanks decodedBanks;
+    PointCurves decodedPoints;
+    std::memcpy(decodedBanks.banks.data(), banks->getData(), sizeof(decodedBanks.banks));
+    std::memcpy(&decodedPoints, points->getData(), sizeof(decodedPoints));
+    for (const auto &bank : decodedBanks.banks)
+        if (!validCurves(bank)) return juce::Result::fail("Plug-in preset contains invalid curves.");
+    for (const auto &bank : decodedPoints.banks)
+        if (!validPoints(bank)) return juce::Result::fail("Plug-in preset contains invalid points.");
+    for (auto *parameter : processor.getParameters())
+    {
+        auto *ranged = dynamic_cast<juce::RangedAudioParameter *>(parameter);
+        if (!ranged) continue;
+        int matches = 0;
+        for (auto child : tree)
+            if (child.hasType("PARAM") && child.getProperty("id").toString() == ranged->paramID)
+            {
+                ++matches;
+                const auto stored = child.getProperty("value");
+                if (!numeric(stored)) return juce::Result::fail("Plug-in preset contains invalid parameters.");
+                const float value = float(stored);
+                const auto &range = ranged->getNormalisableRange();
+                if (!std::isfinite(value) || value < range.start || value > range.end)
+                    return juce::Result::fail("Plug-in preset contains invalid parameters.");
+            }
+        if (matches != 1) return juce::Result::fail("Plug-in preset parameters are incomplete.");
+    }
     juce::MemoryBlock state;
     juce::MemoryOutputStream output(state, false);
     tree.writeToStream(output);
@@ -106,6 +151,7 @@ juce::Result saveBank(Processor &processor, const juce::File &file)
     tree.setProperty("version", 1, nullptr);
     tree.setProperty("curves", juce::MemoryBlock(&curves, sizeof(curves)), nullptr);
     tree.setProperty("points", juce::MemoryBlock(&points, sizeof(points)), nullptr);
+    tree.setProperty("pointSampleRate", processor.pointSampleRate(), nullptr);
     return writeTree(file, tree);
 }
 
@@ -133,7 +179,9 @@ juce::Result loadBank(Processor &processor, const juce::File &file)
     auto banks = processor.getBanks();
     auto allPoints = processor.getPointCurves();
     banks.banks[index] = curves;
-    allPoints.banks[index] = points;
+    const double savedRate = double(tree.getProperty("pointSampleRate", 48000.0));
+    allPoints.banks[index] = std::isfinite(savedRate) && savedRate == processor.pointSampleRate()
+                                 ? points : BankPoints{};
     processor.updateBanks(banks);
     processor.setPointCurves(allPoints);
     return juce::Result::ok();

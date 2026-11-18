@@ -7,6 +7,13 @@ Editor::Editor(Processor &processor)
       scrollControl(scrollSpeed, "Scroll")
 {
     setLookAndFeel(&style);
+    seenRevision = p.editorRevision();
+    for (auto *button : {&undoButton, &redoButton}) addAndMakeVisible(button);
+    undoButton.setTooltip("Undo the last curve or bank edit (Command-Z).");
+    redoButton.setTooltip("Redo the last undone edit (Shift-Command-Z).");
+    undoButton.onClick = [this] { stepHistory(true); };
+    redoButton.onClick = [this] { stepHistory(false); };
+    updateHistoryButtons();
     addAndMakeVisible(presetMenu);
     presetMenu.setName("Preset menu");
     presetMenu.setTooltip("Load or save plug-in and selected-bank presets.");
@@ -244,9 +251,6 @@ Editor::Editor(Processor &processor)
     };
     sizeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         p.state, "stftSize", stftSize);
-    if constexpr (SPECTRAL_DIAGNOSTIC)
-        for (auto *control : getChildren())
-            control->setVisible(false);
     setResizable(true, true);
     // The minimum still fits the graph, toolbar, and five bottom control panels.
     setResizeLimits(960, 700, 2000, 1400);
@@ -398,9 +402,30 @@ void Editor::changeBankCount(int delta)
     p.updateBanks(banks);
     timerCallback();
 }
+// Discard snapshots and partial gestures from an earlier processor state.
+void Editor::syncRevision()
+{
+    const auto revision = p.editorRevision();
+    if (revision == seenRevision) return;
+    seenRevision = revision;
+    undoStack.clear();
+    redoStack.clear();
+    updateHistoryButtons();
+    lastBin = -1;
+    pointGesture = false;
+    selectedPoint = selectedSegment = -1;
+    updateHistoryButtons();
+}
+// Reflect the availability of undo and redo actions.
+void Editor::updateHistoryButtons()
+{
+    undoButton.setEnabled(!undoStack.empty());
+    redoButton.setEnabled(!redoStack.empty());
+}
 // Restore a bank and point snapshot for undo or redo.
 void Editor::stepHistory(bool backwards)
 {
+    syncRevision();
     finishGesture();
     auto &source = backwards ? undoStack : redoStack;
     auto &destination = backwards ? redoStack : undoStack;
@@ -431,6 +456,7 @@ void Editor::commit(const spectral::Curves &c)
     if (undoStack.size() > 100)
         undoStack.erase(undoStack.begin());
     redoStack.clear();
+    updateHistoryButtons();
     p.updateCurves(c);
     repaint();
 }
@@ -442,6 +468,8 @@ void Editor::timerCallback()
 // Drain analyzer frames and refresh GUI-owned visual state.
 void Editor::refreshDisplay(double nowSeconds)
 {
+    syncRevision();
+    updateHistoryButtons();
     if ((lastBin >= 0 || pointGesture) && gestureSize != buckets().size)
         cancelGesture();
     auto banks = p.getBanks();
@@ -475,7 +503,6 @@ void Editor::refreshDisplay(double nowSeconds)
         stalled ? .15 : std::numeric_limits<double>::infinity());
     const bool received = receivedCount > 0;
     const auto &fresh = displayFrames[size_t(std::max(0, receivedCount - 1))];
-    if constexpr (!SPECTRAL_DIAGNOSTIC)
     {
         const double sampleRate = p.getSampleRate() > 0 ? p.getSampleRate() : 48000.;
         if (received)
@@ -508,6 +535,8 @@ void Editor::resized()
     // Top row: preset button at right, then Draw and Points mode buttons at left.
     auto header = getLocalBounds().removeFromTop(40).withTrimmedLeft(200).withTrimmedRight(24).reduced(0, 5);
     presetMenu.setBounds(header.removeFromRight(140));
+    redoButton.setBounds(header.removeFromRight(70));
+    undoButton.setBounds(header.removeFromRight(70));
     drawMode.setBounds(header.removeFromLeft(70));
     pointsMode.setBounds(header.removeFromLeft(70));
     auto area = getLocalBounds().reduced(16);
@@ -595,9 +624,6 @@ void Editor::resized()
                                  gainPanel.getWidth() - 20, 29);
         labels[i].setBounds(gainPanel.getRight() - 37, rowY + 13, 34, 22);
     }
-    // The diagnostic replaces the normal graph/control layout with one FFT plot.
-    if constexpr (SPECTRAL_DIAGNOSTIC)
-        plot = getLocalBounds().reduced(24).withTrimmedTop(55).withTrimmedBottom(45);
 }
 // Construct the sample-rate-aware visible bucket mapping.
 spectral::BucketDisplay Editor::buckets() const
@@ -617,9 +643,8 @@ void Editor::paint(juce::Graphics &g)
     g.fillAll(freeqy::ink);
     g.setColour(freeqy::cyan);
     g.setFont(12.f);
-    g.drawText(SPECTRAL_DIAGNOSTIC ? "FFT / SINE — development diagnostic" : "FREEQY DELAY", 24, 12,
+    g.drawText("FREEQY DELAY", 24, 12,
                getWidth() - 48, 20, juce::Justification::centredLeft);
-    if constexpr (!SPECTRAL_DIAGNOSTIC)
     {
         g.setColour(freeqy::panel);
         g.fillRect(curvePanel);
@@ -638,7 +663,6 @@ void Editor::paint(juce::Graphics &g)
     }
     g.setColour(freeqy::well);
     g.fillRoundedRectangle(plot.toFloat(), 6);
-    if constexpr (!SPECTRAL_DIAGNOSTIC)
     {
         g.setFont(12.f);
         for (int tick = 0; tick <= 4; ++tick)
@@ -650,8 +674,7 @@ void Editor::paint(juce::Graphics &g)
     }
     g.saveState();
     g.reduceClipRegion(plot);
-    if constexpr (!SPECTRAL_DIAGNOSTIC)
-        delayHistory.draw(g, plot, p.selectedChannel.load());
+    delayHistory.draw(g, plot, p.selectedChannel.load());
     const auto layout = buckets();
     const int ch = p.selectedChannel.load(), selected = p.selectedCurve.load();
     const auto stored = p.getCurves();
@@ -696,7 +719,6 @@ void Editor::paint(juce::Graphics &g)
     }
     const bool showOtherChannel = std::any_of(columns.begin(), columns.end(),
         [selected](const auto &pixel) { return pixel[7] != 0 && std::abs(pixel[selected] - pixel[8]) > .00001f; });
-    if constexpr (!SPECTRAL_DIAGNOSTIC)
     {
         for (int x = 0; x < plot.getWidth(); ++x)
         {
@@ -720,10 +742,9 @@ void Editor::paint(juce::Graphics &g)
         if (pixel[7] == 0)
             continue;
         const int inputHeight = int(std::round(pixel[6] * plot.getHeight()));
-        g.setColour(freeqy::sky.withAlpha(SPECTRAL_DIAGNOSTIC ? .7f : .55f));
+        g.setColour(freeqy::sky.withAlpha(.55f));
         g.fillRect(plot.getX() + x, plot.getBottom() - inputHeight, 1, inputHeight);
     }
-    if constexpr (!SPECTRAL_DIAGNOSTIC)
     {
         if (showOtherChannel)
         {
@@ -745,7 +766,6 @@ void Editor::paint(juce::Graphics &g)
             const auto &pixel = columns[size_t(x)];
             if (pixel[7] == 0)
                 continue;
-            if constexpr (!SPECTRAL_DIAGNOSTIC)
             {
                 const int y =
                     plot.getBottom() - 1 - int(std::round(pixel[t] * (plot.getHeight() - 1)));
@@ -761,7 +781,7 @@ void Editor::paint(juce::Graphics &g)
             }
         }
     }
-    if (p.pointMode && !SPECTRAL_DIAGNOSTIC)
+    if (p.pointMode)
     {
         const auto points = p.getPointCurves();
         const auto &curve = points.banks[p.selectedBank][ch][selected];
@@ -806,8 +826,6 @@ void Editor::paint(juce::Graphics &g)
 // Paint all saved samples covered by dragged display cells.
 void Editor::drawAt(juce::Point<float> point)
 {
-    if (SPECTRAL_DIAGNOSTIC)
-        return;
     const auto layout = buckets();
     if (lastBin >= 0 && gestureSize != layout.size)
     {
@@ -847,7 +865,8 @@ void Editor::drawAt(juce::Point<float> point)
 // Begin a bucket or point-edit gesture from the graph.
 void Editor::mouseDown(const juce::MouseEvent &e)
 {
-    if (!plot.contains(e.getPosition()) || SPECTRAL_DIAGNOSTIC)
+    syncRevision();
+    if (!plot.contains(e.getPosition()))
         return;
     gestureSize = buckets().size;
     beforeBanks = snapshot();
@@ -921,6 +940,7 @@ void Editor::mouseDown(const juce::MouseEvent &e)
 // Update the active bucket, anchor, or curvature edit.
 void Editor::mouseDrag(const juce::MouseEvent &e)
 {
+    syncRevision();
     if (pointGesture && selectedSegment >= 0)
     {
         if (gestureSize != buckets().size) { cancelGesture(); return; }
@@ -950,6 +970,7 @@ void Editor::mouseDrag(const juce::MouseEvent &e)
 // Finish or cancel a gesture after a resolution change.
 void Editor::mouseUp(const juce::MouseEvent &)
 {
+    syncRevision();
     if ((lastBin >= 0 || pointGesture) && gestureSize != buckets().size)
         cancelGesture();
     else
@@ -972,12 +993,14 @@ void Editor::cancelGesture()
 // Commit one completed drawing gesture to undo history.
 void Editor::finishGesture()
 {
+    syncRevision();
     if (lastBin < 0 && !pointGesture)
         return;
     undoStack.push_back(beforeBanks);
     if (undoStack.size() > 100)
         undoStack.erase(undoStack.begin());
     redoStack.clear();
+    updateHistoryButtons();
     lastBin = -1;
     pointGesture = false;
     selectedSegment = -1;
@@ -1004,10 +1027,10 @@ void Editor::ensurePoints()
     auto &curve = points.banks[p.selectedBank][p.selectedChannel][p.selectedCurve];
     if (curve.count) return;
     const auto source = p.getCurves().values[p.selectedChannel][p.selectedCurve];
-    const double sr = p.getSampleRate() > 0 ? p.getSampleRate() : 48000.;
+    const double sr = p.pointSampleRate();
     // Conversion is adaptive so narrow drawn peaks survive the first point edit.
     curve = spectral::PointCurve::fromCurve(source, sr);
-    p.setPointCurves(points);
+    p.setPointCurves(points, sr);
 }
 // Render the selected point curve onto saved-grid values.
 void Editor::applyPointCurve()
@@ -1015,7 +1038,7 @@ void Editor::applyPointCurve()
     const auto points = p.getPointCurves();
     auto curves = p.getCurves();
     const int ch = p.selectedChannel, type = p.selectedCurve;
-    points.banks[p.selectedBank][ch][type].render(curves.values[ch][type], p.getSampleRate() > 0 ? p.getSampleRate() : 48000.);
+    points.banks[p.selectedBank][ch][type].render(curves.values[ch][type], p.pointSampleRate());
     if (p.linked) curves.values[1-ch][type] = curves.values[ch][type];
     p.updateCurves(curves); repaint();
 }

@@ -1,6 +1,5 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include <numbers>
 // Define stable automatable host parameters and defaults.
 juce::AudioProcessorValueTreeState::ParameterLayout Processor::layout()
 {
@@ -64,6 +63,16 @@ bool Processor::isBusesLayoutSupported(const BusesLayout &l) const
 // Allocate DSP state and establish the fixed host latency.
 void Processor::prepareToPlay(double sr, int)
 {
+    {
+        std::lock_guard lock(modelMutex);
+        if (pointRate != sr)
+        {
+            pointModel = {};
+            pointRate = sr;
+            modelRevision.fetch_add(1, std::memory_order_release);
+        }
+        preparedRate.store(sr, std::memory_order_release);
+    }
     engine.setSettings(readSettings());
     engine.prepare(sr, getTotalNumInputChannels());
     engine.setBanks(getBanks());
@@ -79,8 +88,7 @@ void Processor::prepareToPlay(double sr, int)
     meterSamples = 0;
     meterSampleRate = sr;
     latestMeterSeconds.store(0, std::memory_order_release);
-    sinePhase = 0;
-    setLatencySamples(SPECTRAL_DIAGNOSTIC ? 0 : spectral::Latency);
+    setLatencySamples(spectral::Latency);
 }
 // Copy GUI point metadata under the model lock.
 spectral::PointCurves Processor::getPointCurves()
@@ -89,10 +97,20 @@ spectral::PointCurves Processor::getPointCurves()
     return pointModel;
 }
 // Replace GUI point metadata without touching DSP state.
-void Processor::setPointCurves(const spectral::PointCurves &points)
+void Processor::setPointCurves(const spectral::PointCurves &points, double sourceRate)
 {
     std::lock_guard lock(modelMutex);
+    const double current = preparedRate.load(std::memory_order_acquire);
+    if (sourceRate > 0 && current > 0 && sourceRate != current)
+        return;
     pointModel = points;
+    pointRate = current > 0 ? current : (sourceRate > 0 ? sourceRate : pointRate);
+}
+// Read point metadata provenance under the model lock.
+double Processor::pointSampleRate()
+{
+    std::lock_guard lock(modelMutex);
+    return pointRate;
 }
 // Read the selected edit-bank curves under the model lock.
 spectral::Curves Processor::getCurves()
@@ -267,31 +285,17 @@ void Processor::process(juce::AudioBuffer<float> &buffer, bool bypass)
     {
         const int count = std::min(256 - int(meterSamples % 256), buffer.getNumSamples() - offset);
         analyze(buffer, offset, count);
-        if constexpr (SPECTRAL_DIAGNOSTIC)
-        {
-            for (int n = offset; n < offset + count; ++n)
-            {
-                float x = float(std::sin(sinePhase)) * std::pow(10.f, -18.f / 20);
-                sinePhase = std::fmod(sinePhase + 2 * std::numbers::pi * 440 / meterSampleRate,
-                                      2 * std::numbers::pi);
-                for (int c = 0; c < buffer.getNumChannels(); ++c)
-                    buffer.setSample(c, n, x);
-            }
-        }
-        else
-        {
-            float *data[] = {buffer.getWritePointer(0, offset),
-                             buffer.getNumChannels() > 1 ? buffer.getWritePointer(1, offset)
-                                                         : nullptr};
-            engine.process(data, count, bypass);
-        }
+        float *data[] = {buffer.getWritePointer(0, offset),
+                         buffer.getNumChannels() > 1 ? buffer.getWritePointer(1, offset)
+                                                     : nullptr};
+        engine.process(data, count, bypass);
         meterSamples += count;
         if (spectrumReady)
         {
             int a, n, b, m;
             spectrumFifo.prepareToWrite(1, a, n, b, m);
             // The wet analyzer still contains pre-clear samples during the fade.
-            if (n && (SPECTRAL_DIAGNOSTIC || !engine.wetClearActive()))
+            if (n && !engine.wetClearActive())
             {
                 spectrumQueue[a].input = inputAnalyzer.latest();
                 spectrumQueue[a].delay = engine.delaySpectrum();
@@ -334,6 +338,7 @@ void Processor::getStateInformation(juce::MemoryBlock &block)
     tree.setProperty("pointMode", pointMode.load(), nullptr);
     auto points = getPointCurves();
     tree.setProperty("pointCurves", juce::MemoryBlock(&points, sizeof(points)), nullptr);
+    tree.setProperty("pointSampleRate", pointSampleRate(), nullptr);
     tree.setProperty("channel", selectedChannel.load(), nullptr);
     tree.setProperty("linked", linked.load(), nullptr);
     tree.setProperty("spectrogramSpeed", spectrogramSpeed.load(), nullptr);
@@ -402,7 +407,12 @@ void Processor::setStateInformation(const void *data, int size)
                     }
                 }
     }
-    setPointCurves(points);
+    const double savedRate = double(tree.getProperty("pointSampleRate", 48000.0));
+    const double currentRate = preparedRate.load(std::memory_order_acquire);
+    if (!std::isfinite(savedRate) || savedRate <= 0 ||
+        (currentRate > 0 && currentRate != savedRate))
+        points = {};
+    setPointCurves(points, currentRate > 0 ? currentRate : savedRate);
     pointMode = bool(tree.getProperty("pointMode", false));
     state.replaceState(tree);
     updateBanks(banks);
@@ -410,7 +420,11 @@ void Processor::setStateInformation(const void *data, int size)
     selectedCurve = juce::jlimit(0, 2, int(tree.getProperty("curve", 0)));
     selectedChannel = juce::jlimit(0, 1, int(tree.getProperty("channel", 0)));
     linked = bool(tree.getProperty("linked", false));
-    spectrogramSpeed = juce::jlimit(0, 3, int(tree.getProperty("spectrogramSpeed", 2)));
+    // Some hosts resend parameter-only state during transport changes. Preserve the
+    // current display choice when that host payload omits this editor property.
+    if (tree.hasProperty("spectrogramSpeed"))
+        spectrogramSpeed = juce::jlimit(0, 3, int(tree.getProperty("spectrogramSpeed")));
+    modelRevision.fetch_add(1, std::memory_order_release);
 }
 // Create the processor instance requested by JUCE hosts.
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()

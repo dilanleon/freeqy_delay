@@ -38,5 +38,4 @@ Meter the delay return after level/feedback/clear fade, before dry/wet and outpu
 Both sources use stereo 2048-point analysis; parameter markers overlay the history.
 Never apply level/trim again in the GUI; the return already includes wet gain.
 Analyzer measures L/R independently; smooth live input but retain raw wet frames in history.
-The development FFT/sine diagnostic intentionally retains input metering.
 The frequency axis is logarithmic, 20 Hz–20 kHz; DSP covers the full spectrum.
