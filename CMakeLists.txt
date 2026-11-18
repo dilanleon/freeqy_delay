@@ -56,6 +56,7 @@ if(SPECTRAL_BUILD_CLAP)
    CLAP_FEATURES audio-effect delay stereo
    CLAP_USE_JUCE_PARAMETER_RANGES ALL)
  add_executable(ClapCheck Tests/ClapCheck.cpp)
+ target_compile_definitions(ClapCheck PRIVATE JUCE_USE_CURL=0)
  target_link_libraries(ClapCheck PRIVATE clap-core juce::juce_gui_basics)
  add_dependencies(ClapCheck FreeqyDelay_CLAP)
  set(spectral_clap_path "$<TARGET_FILE:FreeqyDelay_CLAP>")

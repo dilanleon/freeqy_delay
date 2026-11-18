@@ -67,6 +67,7 @@ JUCE and project source licensing, clear private test artifacts, and add Develop
 signing for the plug-in bundles and installer followed by notarization and stapling.
 Create a draft release from the reviewed version tag with all three verified assets.
 Publish and check downloads signed out before merging the Station Website download links.
+The website links directly to GitHub release assets, which serve the installer bytes.
 
 ## Ownership and cross-file workflows
 
