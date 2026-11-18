@@ -10,6 +10,7 @@
         <line choice="vst3"/>
         <line choice="clap"/>
         <line choice="au"/>
+        <line choice="require-format"/>
     </choices-outline>
     <choice id="vst3" title="VST3" start_selected="true"
             enabled="!choices['vst3'].selected || choices['clap'].selected || choices['au'].selected">
@@ -23,7 +24,13 @@
             enabled="!choices['au'].selected || choices['vst3'].selected || choices['clap'].selected">
         <pkg-ref id="com.dleon.freeqydelay.pkg.au"/>
     </choice>
+    <!-- The command-line installer can change a choice even when its checkbox is disabled. -->
+    <choice id="require-format" visible="false" enabled="false"
+            selected="!choices['vst3'].selected &amp;&amp; !choices['clap'].selected &amp;&amp; !choices['au'].selected">
+        <pkg-ref id="com.dleon.freeqydelay.pkg.require-format"/>
+    </choice>
     <pkg-ref id="com.dleon.freeqydelay.pkg.vst3">vst3.pkg</pkg-ref>
     <pkg-ref id="com.dleon.freeqydelay.pkg.clap">clap.pkg</pkg-ref>
     <pkg-ref id="com.dleon.freeqydelay.pkg.au">au.pkg</pkg-ref>
+    <pkg-ref id="com.dleon.freeqydelay.pkg.require-format">require-format.pkg</pkg-ref>
 </installer-gui-script>

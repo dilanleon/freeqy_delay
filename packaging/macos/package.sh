@@ -37,6 +37,10 @@ EOF
 build_component vst3 'FREEQY DELAY.vst3' VST3
 build_component clap 'FREEQY DELAY.clap' CLAP
 build_component au 'FREEQY DELAY.component' Components
+mkdir "$work/require-format"
+/usr/bin/install -m 755 "$script_dir/require-format.sh" "$work/require-format/preinstall"
+/usr/bin/pkgbuild --nopayload --scripts "$work/require-format" \
+    --identifier com.dleon.freeqydelay.pkg.require-format --version "$version" "$work/require-format.pkg"
 mkdir -p "$output"
 /usr/bin/productbuild --distribution "$script_dir/Distribution.xml" --package-path "$work" \
     "$output/FREEQY-DELAY-macOS.pkg"

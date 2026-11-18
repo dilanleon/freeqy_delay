@@ -40,6 +40,13 @@ install_formats() {
 
 sudo /usr/sbin/installer -pkg "$package" -target / -showChoicesXML > "$work/defaults.plist"
 /usr/bin/plutil -lint "$work/defaults.plist"
+if install_formats vst3 clap au; then
+    echo 'An empty format selection should fail' >&2
+    exit 1
+fi
+test ! -e "$vst3"
+test ! -e "$clap"
+test ! -e "$au"
 install_formats clap au
 test -d "$vst3"
 test ! -e "$clap"
