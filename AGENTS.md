@@ -74,8 +74,8 @@ validation requirements, or commands change. `README.md` is the user and build e
 
 ## Core invariants
 
-- Keep the host-facing name, bundle and four-character identities stable. Keep the APVTS root
-  `SpectralDelay` unchanged.
+- Keep the host-facing name, bundle and four-character identities stable. Preserve the APVTS root
+  `FreeqyDelay` for current saved state.
 - No allocation, mutex, I/O, serialization or GUI access during audio processing. Allocate
   worst-case DSP history during prepare; transfer analyzer frames through bounded, preallocated
   SPSC messaging without blocking audio.

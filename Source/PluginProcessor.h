@@ -7,6 +7,8 @@
 class Processor final : public juce::AudioProcessor, private juce::Timer
 {
   public:
+    static constexpr auto savedStateType = "FreeqyDelay";
+
     // Initialize the host processor and its versioned APVTS root.
     Processor();
     // Stop model publishing before processor destruction.

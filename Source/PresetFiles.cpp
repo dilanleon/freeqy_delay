@@ -8,6 +8,7 @@ namespace
 {
 using BankPoints = std::array<std::array<PointCurve, 3>, 2>;
 constexpr int64_t maximumPresetBytes = 1024 * 1024;
+constexpr int bankPresetVersion = 2;
 
 // Read a bounded local preset file before parsing its tree.
 juce::Result readTree(const juce::File &file, juce::ValueTree &tree)
@@ -80,7 +81,7 @@ juce::Result loadPlugin(Processor &processor, const juce::File &file)
 {
     juce::ValueTree tree;
     if (auto result = readTree(file, tree); result.failed()) return result;
-    if (!tree.hasType("SpectralDelay") || int(tree.getProperty("version", 0)) != 4)
+    if (!tree.hasType(Processor::savedStateType) || int(tree.getProperty("version", 0)) != 4)
         return juce::Result::fail("This is not a supported plug-in preset.");
     const auto bankProperty = tree.getProperty("banks");
     const auto pointProperty = tree.getProperty("pointCurves");
@@ -148,7 +149,7 @@ juce::Result saveBank(Processor &processor, const juce::File &file)
     const auto curves = processor.getBanks().banks[index];
     const auto points = processor.getPointCurves().banks[index];
     juce::ValueTree tree("FreeqyBankPreset");
-    tree.setProperty("version", 1, nullptr);
+    tree.setProperty("version", bankPresetVersion, nullptr);
     tree.setProperty("curves", juce::MemoryBlock(&curves, sizeof(curves)), nullptr);
     tree.setProperty("points", juce::MemoryBlock(&points, sizeof(points)), nullptr);
     tree.setProperty("pointSampleRate", processor.pointSampleRate(), nullptr);
@@ -160,7 +161,8 @@ juce::Result loadBank(Processor &processor, const juce::File &file)
 {
     juce::ValueTree tree;
     if (auto result = readTree(file, tree); result.failed()) return result;
-    if (!tree.hasType("FreeqyBankPreset") || int(tree.getProperty("version", 0)) != 1)
+    if (!tree.hasType("FreeqyBankPreset") ||
+        int(tree.getProperty("version", 0)) != bankPresetVersion)
         return juce::Result::fail("This is not a supported selected-bank preset.");
     const auto curveProperty = tree.getProperty("curves");
     const auto pointProperty = tree.getProperty("points");

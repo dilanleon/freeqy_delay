@@ -49,7 +49,7 @@ Processor::Processor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      state(*this, nullptr, "SpectralDelay", layout())
+      state(*this, nullptr, savedStateType, layout())
 {
     startTimerHz(30);
 }
@@ -356,7 +356,7 @@ void Processor::setStateInformation(const void *data, int size)
     auto tree = juce::ValueTree::readFromData(data, size);
     // State loading is v4-only. Reject unsupported payloads before replacing APVTS
     // or changing any curve/editor model, leaving the current instance intact.
-    if (!tree.isValid() || !tree.hasType("SpectralDelay") ||
+    if (!tree.isValid() || !tree.hasType(savedStateType) ||
         int(tree.getProperty("version", 0)) != 4)
         return;
     spectral::CurveBanks banks;

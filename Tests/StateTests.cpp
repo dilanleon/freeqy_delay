@@ -177,6 +177,24 @@ int main(int argc, char **argv)
             saved.setPointCurves(points);
             saved.selectedBank = 2;
             check(spectral::presets::savePlugin(saved, pluginFile).wasOk(), "save plug-in preset");
+            juce::MemoryBlock presetBytes;
+            check(pluginFile.loadFileAsData(presetBytes), "read saved plug-in preset");
+            const auto currentState =
+                juce::ValueTree::readFromData(presetBytes.getData(), presetBytes.getSize());
+            check(currentState.hasType("FreeqyDelay"), "new presets must use the FreeqyDelay root");
+            juce::ValueTree legacyState("SpectralDelay");
+            legacyState.copyPropertiesAndChildrenFrom(currentState, nullptr);
+            juce::MemoryOutputStream legacyBytes;
+            legacyState.writeToStream(legacyBytes);
+            check(badFile.replaceWithData(legacyBytes.getData(), legacyBytes.getDataSize()),
+                  "write legacy plug-in preset");
+            saved.state.getParameter("mix")->setValueNotifyingHost(.1f);
+            saved.setStateInformation(legacyBytes.getData(), int(legacyBytes.getDataSize()));
+            check(std::abs(saved.state.getRawParameterValue("mix")->load() - .1f) < .001f,
+                  "legacy host state should be rejected");
+            check(spectral::presets::loadPlugin(saved, badFile).failed() &&
+                      std::abs(saved.state.getRawParameterValue("mix")->load() - .1f) < .001f,
+                  "legacy plug-in preset should be rejected without changing state");
             check(spectral::presets::saveBank(saved, bankFile).wasOk(), "save selected-bank preset");
             saved.state.getParameter("mix")->setValueNotifyingHost(.1f);
             banks.banks[2].values[0][0][17] = .12f;
@@ -249,7 +267,9 @@ int main(int argc, char **argv)
             juce::MemoryBlock bankBytes;
             check(bankFile.loadFileAsData(bankBytes), "read bank preset for version check");
             auto oldBankTree = juce::ValueTree::readFromData(bankBytes.getData(), bankBytes.getSize());
-            oldBankTree.setProperty("version", 2, nullptr);
+            check(int(oldBankTree.getProperty("version", 0)) == 2,
+                  "new bank presets must use version 2");
+            oldBankTree.setProperty("version", 1, nullptr);
             juce::MemoryOutputStream oldBankBytes;
             oldBankTree.writeToStream(oldBankBytes);
             check(badFile.replaceWithData(oldBankBytes.getData(), oldBankBytes.getDataSize()) &&

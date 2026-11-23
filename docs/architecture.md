@@ -7,7 +7,7 @@ Authoritative signal-flow, STFT, bank, delay, modulation, and real-time requirem
 C++20 JUCE audio effect, macOS VST3, native CLAP and Standalone development targets.
 The host-facing product name and build target are FREEQY DELAY / FreeqyDelay; the manufacturer
 name is Station Sound. Keep the existing bundle and four-character identities stable.
-Keep the internal APVTS root `SpectralDelay` unchanged so existing saved parameter state remains readable.
+Host state uses the `FreeqyDelay` APVTS root. Payloads saved under the previous root are rejected.
 Independent L/R curves set delay, feedback and level across frequency.
 Input trim precedes the dry/wet split; output trim follows linear mixing.
 

@@ -1,7 +1,8 @@
 # FREEQY DELAY
 
-FREEQY DELAY is a C++20 JUCE spectral delay by Station Sound. Internal installers
-offer VST3 and native CLAP on macOS, Windows, and Linux, plus Audio Units on macOS.
+FREEQY DELAY is a frequency-domain delay plug-in from Station Sound, built with C++20
+and JUCE. Installers offer VST3 and native CLAP on macOS, Windows, and Linux, plus
+Audio Units on macOS.
 
 Each stereo channel has independent **Delay**, **Feedback**, and **Level** curves across
 a logarithmic 20 Hz–20 kHz display. Up to four banks hold complete sets of curves. Morph
@@ -9,7 +10,7 @@ blends adjacent active banks without changing the bank selected for editing.
 
 ## Installation
 
-Download the installer for your system from the [latest GitHub release](https://github.com/dilanleon/spectral_delay/releases/latest). Close your DAW before installing or updating.
+Download the installer for your system from the [latest GitHub release](https://github.com/dilanleon/freeqy_delay/releases/latest). Close your DAW before installing or updating.
 
 - **macOS** — Open `FREEQY-DELAY-macOS.pkg` and choose VST3, CLAP, AU, or any combination.
 - **Windows x64** — Run `FREEQY-DELAY-Windows-x64-Setup.exe` and choose VST3, CLAP, or both.
@@ -19,7 +20,7 @@ Download the installer for your system from the [latest GitHub release](https://
 
 The macOS installer is unsigned and has not been notarized because we haven’t enrolled in the paid Apple Developer Program. macOS Gatekeeper may report that it can’t verify the developer or that Apple can’t check the installer for malicious software.
 
-If you downloaded the package from the [official GitHub release](https://github.com/dilanleon/spectral_delay/releases/latest) and trust the download:
+If you downloaded the package from the [official GitHub release](https://github.com/dilanleon/freeqy_delay/releases/latest) and trust the download:
 
 1. Open `FREEQY-DELAY-macOS.pkg` once and dismiss the warning.
 2. Within about an hour, open **System Settings > Privacy & Security** and scroll to **Security**.
@@ -193,9 +194,9 @@ The current state schema is version 4. It saves four stereo curve banks, the act
 count, edit selection, point-mode data, and display speed. Delay history and visual
 history are not serialized. Point metadata records its sample rate; when a state or bank preset
 uses a different sample rate, points are regenerated from the saved grid on the next point edit.
-Only version 4 is accepted; earlier versions are ignored
-without changing the loaded state. Retired copy/chorus parameter IDs are not reused. The
-internal APVTS root remains `SpectralDelay` for saved-state compatibility.
+Host sessions and full presets require the `FreeqyDelay` root and schema version 4.
+Bank presets require version 2. Sessions and presets saved by older builds are rejected
+without changing the loaded state. Retired copy/chorus parameter IDs are not reused.
 
 ## Development map
 
