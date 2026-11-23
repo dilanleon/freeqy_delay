@@ -36,11 +36,12 @@ bundle as WebCLAP or claim a .wclap artifact until that separate target exists.
 
 ## Internal installers
 
-Run **Internal installers** from the private repository's Actions tab. Each native
+Run **Installer builds and releases** from the repository's Actions tab. Each native
 job builds and tests Release and uploads its installer as a 14-day workflow artifact.
 The platform input defaults to all three and also supports rerunning a single platform.
-The workflow skips packaging in a public repository. Only repository readers can
-download the internal artifacts. For current validation results, check the workflow run.
+Manual runs produce artifacts only. A push to `main`, including a merge, publishes a
+numbered GitHub release with all three installers after every platform passes. Releases
+follow the repository's visibility. For validation results, check the workflow run.
 
 | CI build | Release asset | Install destinations |
 | --- | --- | --- |
@@ -62,12 +63,11 @@ leaves its existing files in place. Run system installation tests only on dispos
 test systems. Linux tests use a temporary home. The suites run VST3 and CLAP host
 scans from installed paths and macOS also runs `auval -v aufx Frqy Dleo`.
 
-The internal macOS package is unsigned. Before public distribution, confirm the
-JUCE and project source licensing, clear private test artifacts, and add Developer ID
-signing for the plug-in bundles and installer followed by notarization and stapling.
-Create a draft release from the reviewed version tag with all three verified assets.
-Publish and check downloads signed out before merging the Station Website download links.
-The website links directly to GitHub release assets, which serve the installer bytes.
+The macOS package is unsigned. The release notes and Station Website disclose this.
+Before opening the repository to the public, confirm the JUCE and project source
+licensing and clear private test artifacts. Check downloads signed out before merging
+the Station Website download links. The website links directly to GitHub release
+assets, which serve the installer bytes.
 
 ## Ownership and cross-file workflows
 

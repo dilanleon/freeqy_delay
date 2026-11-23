@@ -1,6 +1,8 @@
-name: Internal installers
+name: Installer builds and releases
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       platform:
@@ -18,7 +20,7 @@ permissions:
 
 jobs:
   macos:
-    if: ${{ github.event.repository.private && (inputs.platform == 'all' || inputs.platform == 'macos') }}
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -42,7 +44,7 @@ jobs:
           retention-days: 14
 
   windows:
-    if: ${{ github.event.repository.private && (inputs.platform == 'all' || inputs.platform == 'windows') }}
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows' }}
     runs-on: windows-2025-vs2026
     timeout-minutes: 45
     steps:
@@ -69,7 +71,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ github.event.repository.private && (inputs.platform == 'all' || inputs.platform == 'linux') }}
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -98,3 +100,28 @@ jobs:
           path: dist/FREEQY-DELAY-Linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="build-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" \
+            dist/FREEQY-DELAY-macOS.pkg \
+            dist/FREEQY-DELAY-Windows-x64-Setup.exe \
+            dist/FREEQY-DELAY-Linux-x86_64.tar.gz \
+            --target "$GITHUB_SHA" \
+            --title "FREEQY DELAY build ${GITHUB_RUN_NUMBER}" \
+            --notes "The macOS installer is unsigned and has not been notarized."
