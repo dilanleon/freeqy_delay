@@ -7,6 +7,72 @@ Each stereo channel has independent **Delay**, **Feedback**, and **Level** curve
 a logarithmic 20 Hz–20 kHz display. Up to four banks hold complete sets of curves. Morph
 blends adjacent active banks without changing the bank selected for editing.
 
+## Installation
+
+Download the installer for your system from the [latest GitHub release](https://github.com/dilanleon/spectral_delay/releases/latest). Close your DAW before installing or updating.
+
+- **macOS** — Open `FREEQY-DELAY-macOS.pkg` and choose VST3, CLAP, AU, or any combination.
+- **Windows x64** — Run `FREEQY-DELAY-Windows-x64-Setup.exe` and choose VST3, CLAP, or both.
+- **Linux x86-64** — Extract `FREEQY-DELAY-Linux-x86_64.tar.gz` and run `./install.sh` in a terminal. Choose VST3, CLAP, or both.
+
+### Open the unsigned macOS installer
+
+The macOS installer is unsigned and has not been notarized because we haven’t enrolled in the paid Apple Developer Program. macOS Gatekeeper may report that it can’t verify the developer or that Apple can’t check the installer for malicious software.
+
+If you downloaded the package from the [official GitHub release](https://github.com/dilanleon/spectral_delay/releases/latest) and trust the download:
+
+1. Open `FREEQY-DELAY-macOS.pkg` once and dismiss the warning.
+2. Within about an hour, open **System Settings > Privacy & Security** and scroll to **Security**.
+3. Click **Open Anyway** next to the blocked installer. Authenticate if prompted, then confirm **Open**.
+4. In Installer, select the plug-in formats you want and finish the installation.
+
+This exception applies to the installer you opened. If macOS reports that the package is damaged or contains malware, stop and check the download source. See [Apple’s Gatekeeper guide](https://support.apple.com/en-us/102445).
+
+### Install from source on macOS
+
+| Format | Enable/build | Local output in a Release CMake tree |
+| --- | --- | --- |
+| VST3 | Built by default | `FreeqyDelay_artefacts/Release/VST3/FREEQY DELAY.vst3` |
+| Standalone | Built by default with CMake | `FreeqyDelay_artefacts/Release/Standalone/FREEQY DELAY.app` |
+| Native CLAP | `make clap` or `-DSPECTRAL_BUILD_CLAP=ON` | `FreeqyDelay_artefacts/Release/CLAP/FREEQY DELAY.clap` |
+| Audio Units v2 | `-DSPECTRAL_BUILD_AU=ON` on macOS | `FreeqyDelay_artefacts/Release/AU/FREEQY DELAY.component` |
+| AAX Native | `make aax AAX=1` or `-DSPECTRAL_BUILD_AAX=ON` | `FreeqyDelay_artefacts/Release/AAX/FREEQY DELAY.aaxplugin` |
+
+Native CLAP uses the `clap-juce-extensions` commit pinned in `CMakeLists.txt`. Supply
+`CLAP_JUCE_EXTENSIONS_DIR` for a local checkout or allow CMake to fetch it. `make clap`
+clears quarantine from its local bundle after packaging. The CLAP ID is
+`com.stationsound.freeqydelay`; its parameter IDs and versioned state payload are shared
+with VST3.
+
+The macOS Makefile installs only when explicitly requested:
+
+```sh
+make install-vst3
+make install-clap
+make install AAX=1
+make install CLAP=1 VST3_DIR="$PWD/build-stage/VST3" CLAP_DIR="$PWD/build-stage/CLAP"
+```
+
+Default destinations are `/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/CLAP`,
+and `/Library/Application Support/Avid/Audio/Plug-Ins`. Override `VST3_DIR`, `CLAP_DIR`,
+or `AAX_DIR` for staging. `make install` builds and installs enabled formats; `CLAP=1`
+and `AAX=1` opt those formats in. The VST3 and CLAP install components copy first, then
+clear quarantine from the installed bundle and fail if that step fails. Close hosts
+before replacing a loaded plugin.
+
+If the system destination requires administrator access, build as your normal user, then
+run only the install component with elevated privileges, for example:
+
+```sh
+sudo cmake --install build-system --config Release --component VST3
+```
+
+The AAX target uses JUCE's bundled SDK unless `AAX_SDK_PATH` selects an external SDK;
+the Makefile also detects a single local `aax-sdk*/Interfaces/AAX.h` folder. AAX
+compilation is separate from PACE signing and Pro Tools acceptance. Retail Pro Tools
+requires PACE signing. The current native macOS CLAP bundle is not WebCLAP; a WASM
+adapter and browser UI would be separate targets. No `.wclap` artifact is built.
+
 ## Build and test
 
 Use CMake 3.22 or newer and a native C++20 toolchain. The commands below use macOS
@@ -27,8 +93,7 @@ have `.deps/venv/bin/cmake` and `.deps/JUCE`; substitute that CMake executable a
 bundles in the build tree and do not install them.
 
 The root Makefile uses a separate `build-system` tree. `make` builds Release VST3 only.
-`make clap` builds native CLAP; `make aax AAX=1` builds AAX Native. See [Formats and
-installation](#formats-and-installation) before installing a bundle.
+`make clap` builds native CLAP; `make aax AAX=1` builds AAX Native. See [Install from source on macOS](#install-from-source-on-macos) before installing a bundle.
 
 ## Use the editor
 
@@ -131,51 +196,6 @@ uses a different sample rate, points are regenerated from the saved grid on the 
 Only version 4 is accepted; earlier versions are ignored
 without changing the loaded state. Retired copy/chorus parameter IDs are not reused. The
 internal APVTS root remains `SpectralDelay` for saved-state compatibility.
-
-## Formats and installation
-
-| Format | Enable/build | Local output in a Release CMake tree |
-| --- | --- | --- |
-| VST3 | Built by default | `FreeqyDelay_artefacts/Release/VST3/FREEQY DELAY.vst3` |
-| Standalone | Built by default with CMake | `FreeqyDelay_artefacts/Release/Standalone/FREEQY DELAY.app` |
-| Native CLAP | `make clap` or `-DSPECTRAL_BUILD_CLAP=ON` | `FreeqyDelay_artefacts/Release/CLAP/FREEQY DELAY.clap` |
-| Audio Units v2 | `-DSPECTRAL_BUILD_AU=ON` on macOS | `FreeqyDelay_artefacts/Release/AU/FREEQY DELAY.component` |
-| AAX Native | `make aax AAX=1` or `-DSPECTRAL_BUILD_AAX=ON` | `FreeqyDelay_artefacts/Release/AAX/FREEQY DELAY.aaxplugin` |
-
-Native CLAP uses the `clap-juce-extensions` commit pinned in `CMakeLists.txt`. Supply
-`CLAP_JUCE_EXTENSIONS_DIR` for a local checkout or allow CMake to fetch it. `make clap`
-clears quarantine from its local bundle after packaging. The CLAP ID is
-`com.stationsound.freeqydelay`; its parameter IDs and versioned state payload are shared
-with VST3.
-
-The macOS Makefile installs only when explicitly requested:
-
-```sh
-make install-vst3
-make install-clap
-make install AAX=1
-make install CLAP=1 VST3_DIR="$PWD/build-stage/VST3" CLAP_DIR="$PWD/build-stage/CLAP"
-```
-
-Default destinations are `/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/CLAP`,
-and `/Library/Application Support/Avid/Audio/Plug-Ins`. Override `VST3_DIR`, `CLAP_DIR`,
-or `AAX_DIR` for staging. `make install` builds and installs enabled formats; `CLAP=1`
-and `AAX=1` opt those formats in. The VST3 and CLAP install components copy first, then
-clear quarantine from the installed bundle and fail if that step fails. Close hosts
-before replacing a loaded plugin.
-
-If the system destination requires administrator access, build as your normal user, then
-run only the install component with elevated privileges, for example:
-
-```sh
-sudo cmake --install build-system --config Release --component VST3
-```
-
-The AAX target uses JUCE's bundled SDK unless `AAX_SDK_PATH` selects an external SDK;
-the Makefile also detects a single local `aax-sdk*/Interfaces/AAX.h` folder. AAX
-compilation is separate from PACE signing and Pro Tools acceptance. Retail Pro Tools
-requires PACE signing. The current native macOS CLAP bundle is not WebCLAP; a WASM
-adapter and browser UI would be separate targets. No `.wclap` artifact is built.
 
 ## Development map
 
