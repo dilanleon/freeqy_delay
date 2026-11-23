@@ -39,8 +39,9 @@ bundle as WebCLAP or claim a .wclap artifact until that separate target exists.
 Run **Installer builds and releases** from the repository's Actions tab. Each native
 job builds and tests Release and uploads its installer as a 14-day workflow artifact.
 The platform input defaults to all three and also supports rerunning a single platform.
-Manual runs produce artifacts only. A push to `main`, including a merge, publishes a
-numbered GitHub release with all three installers after every platform passes. Releases
+Manual runs produce artifacts only. A push to `main`, including a merge, triggers an
+automatic build only if it changes files under `Source/`. After every platform passes,
+the workflow publishes a numbered GitHub release with all three installers. Releases
 follow the repository's visibility. For validation results, check the workflow run.
 
 | CI build | Release asset | Install destinations |

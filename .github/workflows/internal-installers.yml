@@ -3,6 +3,8 @@ name: Installer builds and releases
 on:
   push:
     branches: [main]
+    paths:
+      - 'Source/**'
   workflow_dispatch:
     inputs:
       platform:
